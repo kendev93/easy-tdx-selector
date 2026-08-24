@@ -1,4 +1,5 @@
 import type {
+  CustomFormulaMetadata,
   FormulaScreenMetadata,
   JobState,
   ResultsMeta,
@@ -37,6 +38,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export async function fetchMetadata(): Promise<FormulaScreenMetadata> {
   const payload = await request<{ data: FormulaScreenMetadata }>('/metadata')
   return payload.data
+}
+
+export async function parseFormula(formulaText: string): Promise<CustomFormulaMetadata> {
+  const response = await request<{ data: CustomFormulaMetadata }>('/parse', {
+    method: 'POST',
+    body: JSON.stringify({ formula_text: formulaText }),
+  })
+  return response.data
 }
 
 export async function createJob(payload: ScanPayload): Promise<{ job_id: string; status: string }> {

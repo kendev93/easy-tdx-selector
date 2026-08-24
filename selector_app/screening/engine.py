@@ -11,6 +11,11 @@ from dataclasses import dataclass
 import pandas as pd
 
 from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, MarketDataAdapter, StockRef
+from selector_app.formulas.custom import (
+    ParsedFormula,
+    evaluate_custom_formula,
+    parse_formula,
+)
 from selector_app.formulas.registry import FORMULA_REGISTRY, FormulaRegistry
 
 from .models import ScanConfig, ScanReport, ScreenMatch
@@ -49,30 +54,51 @@ def _evaluate_frame(
     frame: pd.DataFrame,
     config: ScanConfig,
     registry: FormulaRegistry,
+    parsed_formula: ParsedFormula | None = None,
 ) -> ScanOutcome:
     if frame.empty:
         return ScanOutcome(skipped_reason="数据为空")
 
-    results = {
-        definition.id: definition.calculate(frame.copy(deep=True))
-        for definition in registry.formulas_for_signals(config.selected_signals)
-    }
-    if any(not result.sufficient_data for result in results.values()):
-        return ScanOutcome(skipped_reason="数据不足")
-
-    matched_signals = tuple(
-        signal_id
-        for signal_id in config.selected_signals
-        if results[registry.signal(signal_id).formula_id].last_signal_state[
-            signal_id.split(".", 1)[1]
-        ]
-    )
+    if parsed_formula is not None:
+        formula_result = evaluate_custom_formula(
+            parsed_formula,
+            frame.copy(deep=True),
+            config.formula_parameters,
+        )
+        if any(
+            signal_id not in formula_result.last_signal_state
+            for signal_id in config.selected_signals
+        ):
+            raise ValueError("选择的自定义输出不属于当前公式")
+        if not formula_result.sufficient_data:
+            return ScanOutcome(skipped_reason="数据不足")
+        matched_signals = tuple(
+            signal_id
+            for signal_id in config.selected_signals
+            if formula_result.last_signal_state[signal_id]
+        )
+        formula_results = {"custom": formula_result}
+    else:
+        results = {
+            definition.id: definition.calculate(frame.copy(deep=True))
+            for definition in registry.formulas_for_signals(config.selected_signals)
+        }
+        if any(not result.sufficient_data for result in results.values()):
+            return ScanOutcome(skipped_reason="数据不足")
+        matched_signals = tuple(
+            signal_id
+            for signal_id in config.selected_signals
+            if results[registry.signal(signal_id).formula_id].last_signal_state[
+                signal_id.split(".", 1)[1]
+            ]
+        )
+        formula_results = results
     matched_bools = [signal_id in matched_signals for signal_id in config.selected_signals]
     if not combine_matches(matched_bools, config.combine_mode, config.minimum_matches):
         return ScanOutcome()
 
     indicator_values: dict[str, float | None] = {}
-    for formula_id, result in results.items():
+    for formula_id, result in formula_results.items():
         for name, value in result.last_indicator_values.items():
             indicator_values[f"{formula_id}.{name}"] = value
     last_close = float(frame["close"].iloc[-1])
@@ -92,7 +118,8 @@ def _evaluate_frame(
 def _scan_one_process(ref: StockRef, config: ScanConfig) -> ScanOutcome:
     adapter = EasyTdxAdapter()
     frame = adapter.read_stock(ref)
-    return _evaluate_frame(ref, frame, config, FORMULA_REGISTRY)
+    parsed_formula = parse_formula(config.formula_text) if config.formula_text else None
+    return _evaluate_frame(ref, frame, config, FORMULA_REGISTRY, parsed_formula)
 
 
 class ScreenEngine:
@@ -111,6 +138,7 @@ class ScreenEngine:
         config: ScanConfig,
         progress_callback: ProgressCallback | None = None,
     ) -> ScanReport:
+        parsed_formula = parse_formula(config.formula_text) if config.formula_text else None
         refs = self._adapter.list_stock_refs(
             config.vipdoc_path,
             config.universe,
@@ -121,7 +149,7 @@ class ScreenEngine:
                 progress_callback(0, 0, ScanOutcome())
             return ScanReport(0, 0, 0, 0, 0, (), {}, {})
 
-        outcomes = self._scan_refs(refs, config, progress_callback)
+        outcomes = self._scan_refs(refs, config, progress_callback, parsed_formula)
         results = tuple(outcome.result for outcome in outcomes if outcome.result is not None)
         failures = Counter(
             outcome.error_reason for outcome in outcomes if outcome.error_reason is not None
@@ -145,11 +173,12 @@ class ScreenEngine:
         refs: list[StockRef],
         config: ScanConfig,
         progress_callback: ProgressCallback | None,
+        parsed_formula: ParsedFormula | None,
     ) -> list[ScanOutcome]:
         if config.workers <= 1:
             outcomes: list[ScanOutcome] = []
             for current, ref in enumerate(refs, start=1):
-                outcome = self._scan_one(ref, config)
+                outcome = self._scan_one(ref, config, parsed_formula)
                 outcomes.append(outcome)
                 if progress_callback is not None:
                     progress_callback(current, len(refs), outcome)
@@ -168,6 +197,7 @@ class ScreenEngine:
                     _scan_one_process if executor_type is ProcessPoolExecutor else self._scan_one,
                     ref,
                     config,
+                    *(() if executor_type is ProcessPoolExecutor else (parsed_formula,)),
                 ): index
                 for index, ref in enumerate(refs)
             }
@@ -187,10 +217,15 @@ class ScreenEngine:
                     progress_callback(completed, len(refs), outcome)
         return [outcomes_by_index[index] for index in range(len(refs))]
 
-    def _scan_one(self, ref: StockRef, config: ScanConfig) -> ScanOutcome:
+    def _scan_one(
+        self,
+        ref: StockRef,
+        config: ScanConfig,
+        parsed_formula: ParsedFormula | None = None,
+    ) -> ScanOutcome:
         try:
             frame = self._adapter.read_stock(ref)
-            return _evaluate_frame(ref, frame, config, self._registry)
+            return _evaluate_frame(ref, frame, config, self._registry, parsed_formula)
         except Exception as exc:  # noqa: BLE001 - one bad stock must not abort scan
             logger.warning("扫描 %s (%s) 失败，已跳过", ref.code, ref.path, exc_info=True)
             return ScanOutcome(error_reason=str(exc) or type(exc).__name__)

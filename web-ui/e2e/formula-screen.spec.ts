@@ -30,3 +30,27 @@ test('user can configure a formula scan, view results, and export them', async (
   await expect(page.getByTestId('export-json')).toBeEnabled()
   await expect(page.getByTestId('export-csv')).toBeEnabled()
 })
+
+test('user can parse a custom formula and scan with an overridden parameter', async ({ page }) => {
+  await page.route('**/api/v1/formula-screen/metadata', (route) => route.fulfill({ json: { data: metadata } }))
+  await page.route('**/api/v1/formula-screen/parse', (route) => route.fulfill({ json: { data: {
+    parameters: [{ name: 'N', default: 5, minimum: 1, maximum: 10000, step: 1 }],
+    signals: [{ id: 'custom.breakout', display_name: 'BREAKOUT', description: 'BREAKOUT 的最后一根 K 线输出不为 0' }],
+    minimum_bars: 6, warnings: [],
+  } } }))
+  await page.route('**/api/v1/formula-screen/jobs', (route) => route.fulfill({ status: 202, json: { data: { job_id: 'custom-job', status: 'queued' } } }))
+  await page.route('**/api/v1/formula-screen/jobs/custom-job', (route) => route.fulfill({ json: { data: { job_id: 'custom-job', status: 'completed', progress: 1, total_candidates: 1, total_scanned: 1, total_signals: 1, errors: 0, skipped: 0, error: null } } }))
+  await page.route('**/api/v1/formula-screen/jobs/custom-job/results', (route) => route.fulfill({ json: { data: [{ market: 'SH', code: '600001', signal_date: 20260824, last_close: 9.8, matched_signals: ['custom.breakout'], match_count: 1, indicator_values: { 'custom.N': 7, 'custom.LEVEL': 9.8 } }], meta: { total_candidates: 1, total_scanned: 1, total_signals: 1, errors: 0, skipped: 0, failure_reasons: {}, skip_reasons: {} } } }))
+
+  await page.goto('/formula-screen')
+  await page.getByTestId('mode-custom').click()
+  await page.getByTestId('custom-formula').fill('N:=5; BREAKOUT:CROSS(C,REF(C,N));')
+  await page.getByTestId('parse-formula').click()
+  await expect(page.getByTestId('custom-formula-meta')).toContainText('1 个参数')
+  await page.getByTestId('formula-param-N').fill('7')
+  await page.getByTestId('vipdoc-path').fill('/tmp/vipdoc')
+  await page.getByTestId('minimum-matches').fill('1')
+  await page.getByTestId('start-scan').click()
+
+  await expect(page.getByTestId('results-table')).toContainText('600001')
+})

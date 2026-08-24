@@ -9,6 +9,7 @@ import {
 } from './formulaScreen'
 
 const baseForm = (): ScreenFormState => ({
+  mode: 'preset',
   selectedSignals: ['indicator_three.prepare_rally', 'indicator_three.accumulation_zone'],
   combineMode: 'at_least',
   minimumMatches: 2,
@@ -17,6 +18,8 @@ const baseForm = (): ScreenFormState => ({
   vipdocPath: '/data/vipdoc',
   workers: 2,
   period: 'daily',
+  formulaText: '',
+  formulaParameters: {},
 })
 
 describe('formula screen form helpers', () => {
@@ -39,6 +42,8 @@ describe('formula screen form helpers', () => {
       vipdoc_path: '/data/vipdoc',
       workers: 2,
       period: 'daily',
+      formula_text: null,
+      formula_parameters: {},
     })
   })
 

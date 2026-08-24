@@ -28,6 +28,8 @@ EasyTdxAdapter ── easy_tdx 公共离线 API ── vipdoc/{sh,sz}/lday/*.day
 - `web/` 只做请求校验、任务轮询和安全错误响应，不操作上游对象。
 - `web-ui/` 只做表单、请求状态和结果表，不计算公式。
 
+页面保留“预置指标”和“自定义公式”两种模式。自定义模式先将公式提交到 `/parse`：解析器只接受白名单 AST 节点和数组函数，不执行用户 Python；`名称:=数值` 被识别为参数，`名称:表达式` 被识别为可选输出。扫描请求携带原始公式、参数覆盖值和选中的 `custom.*` 输出。
+
 ## 公式一致性约束
 
 - 除零返回 `NaN`，不让一个坏分母终止全市场任务。
@@ -46,6 +48,7 @@ EasyTdxAdapter ── easy_tdx 公共离线 API ── vipdoc/{sh,sz}/lday/*.day
 ## API
 
 - `GET /api/v1/formula-screen/metadata`
+- `POST /api/v1/formula-screen/parse`
 - `POST /api/v1/formula-screen/jobs`（兼容别名 `/scan`）
 - `GET /api/v1/formula-screen/jobs/{job_id}`
 - `GET /api/v1/formula-screen/jobs/{job_id}/results`

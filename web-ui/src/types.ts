@@ -1,5 +1,6 @@
 export type CombineMode = 'all' | 'any' | 'at_least'
 export type Universe = 'all' | 'sh' | 'sz' | 'custom'
+export type FormulaMode = 'preset' | 'custom'
 
 export interface SignalDefinition {
   id: string
@@ -24,7 +25,29 @@ export interface FormulaScreenMetadata {
   data_directory_help: string
 }
 
+export interface CustomParameterDefinition {
+  name: string
+  default: number
+  minimum: number
+  maximum: number
+  step: number
+}
+
+export interface CustomSignalDefinition {
+  id: string
+  display_name: string
+  description: string
+}
+
+export interface CustomFormulaMetadata {
+  parameters: CustomParameterDefinition[]
+  signals: CustomSignalDefinition[]
+  minimum_bars: number
+  warnings: string[]
+}
+
 export interface ScreenFormState {
+  mode: FormulaMode
   selectedSignals: string[]
   combineMode: CombineMode
   minimumMatches: number | null
@@ -33,6 +56,8 @@ export interface ScreenFormState {
   vipdocPath: string
   workers: number
   period: 'daily'
+  formulaText: string
+  formulaParameters: Record<string, number>
 }
 
 export interface ScanPayload {
@@ -44,6 +69,8 @@ export interface ScanPayload {
   vipdoc_path: string
   workers: number
   period: 'daily'
+  formula_text: string | null
+  formula_parameters: Record<string, number>
 }
 
 export interface JobState {

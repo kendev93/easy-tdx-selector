@@ -9,6 +9,7 @@
 - 指标一：主力进场、洗盘、主力拉高、出货；
 - 指标二：始/终、高饱和、新高突破、短中长成本关系；
 - 指标三：准备拉升、压住庄家、建仓区、始/终；
+- 页面支持粘贴自定义通达信公式，自动识别 `名称:=数值` 参数，并将命名输出转换为可选信号；
 - AND、OR、至少满足 N 个；
 - 沪深全部 A 股、仅上海、仅深圳、自定义股票列表；
 - 排除 ETF、基金、指数、债券和未支持的北京市场文件；
@@ -60,6 +61,7 @@ vipdoc/
 
 ```text
 GET  /api/v1/formula-screen/metadata
+POST /api/v1/formula-screen/parse
 POST /api/v1/formula-screen/jobs
 GET  /api/v1/formula-screen/jobs/{job_id}
 GET  /api/v1/formula-screen/jobs/{job_id}/results
@@ -67,7 +69,7 @@ GET  /api/v1/formula-screen/jobs/{job_id}/export.json
 GET  /api/v1/formula-screen/jobs/{job_id}/export.csv
 ```
 
-提交任务必须至少选择一个信号；`at_least` 必须给出不超过所选信号数的 `minimum_matches`。完整 API 结构见 [docs/architecture.md](docs/architecture.md)。
+提交任务必须至少选择一个信号；`at_least` 必须给出不超过所选信号数的 `minimum_matches`。自定义公式先调用 `/parse`，解析成功后再提交 `/jobs`；显式常量赋值如 `N:=5` 会生成参数控件，`SIGNAL:...` 会生成输出信号。完整 API 结构见 [docs/architecture.md](docs/architecture.md)。
 
 ## 测试和质量检查
 

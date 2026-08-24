@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createJob, fetchMetadata, FormulaScreenApiError, getJob, getResults } from './formulaScreen'
+import { createJob, fetchMetadata, FormulaScreenApiError, getJob, getResults, parseFormula } from './formulaScreen'
 
 describe('formula screen API client', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -12,13 +12,24 @@ describe('formula screen API client', () => {
     expect(fetch).toHaveBeenCalledWith('/api/v1/formula-screen/metadata', expect.objectContaining({ headers: { 'Content-Type': 'application/json' } }))
   })
 
+  it('parses a custom formula through the dedicated endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: { parameters: [{ name: 'N', default: 5 }], signals: [] } }), { status: 200 }),
+    ))
+
+    await expect(parseFormula('N:=5; SIGNAL:CROSS(C,REF(C,N));')).resolves.toMatchObject({
+      parameters: [{ name: 'N', default: 5 }],
+    })
+    expect(fetch).toHaveBeenCalledWith('/api/v1/formula-screen/parse', expect.objectContaining({ method: 'POST' }))
+  })
+
   it('posts a scan job and URL-encodes job ids for reads', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'job/1', status: 'queued' } }), { status: 202 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'job/1', status: 'completed' } }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const payload = { selected_signals: ['indicator_three.begin_zone'], combine_mode: 'any' as const, minimum_matches: null, universe: 'all' as const, universe_file: null, vipdoc_path: '/tmp', workers: 1, period: 'daily' as const }
+    const payload = { selected_signals: ['indicator_three.begin_zone'], combine_mode: 'any' as const, minimum_matches: null, universe: 'all' as const, universe_file: null, vipdoc_path: '/tmp', workers: 1, period: 'daily' as const, formula_text: null, formula_parameters: {} }
     await expect(createJob(payload)).resolves.toEqual({ job_id: 'job/1', status: 'queued' })
     await expect(getJob('job/1')).resolves.toMatchObject({ status: 'completed' })
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(payload)

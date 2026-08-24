@@ -8,12 +8,17 @@ from typing import cast
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
 
+from selector_app.formulas.custom import FormulaParseError, parse_formula
 from selector_app.formulas.registry import FORMULA_REGISTRY
 from selector_app.screening.export import report_to_csv, report_to_json
 from selector_app.screening.jobs import ScreenJobRunner
 from selector_app.screening.models import ScanReport
 
-from ..schemas import FormulaScreenRequest, validate_vipdoc_path
+from ..schemas import (
+    CustomFormulaParseRequest,
+    FormulaScreenRequest,
+    validate_vipdoc_path,
+)
 
 router = APIRouter(prefix="/formula-screen", tags=["formula-screen"])
 
@@ -46,6 +51,18 @@ def metadata() -> dict[str, object]:
             ),
         }
     }
+
+
+@router.post("/parse")
+def parse_custom_formula(payload: CustomFormulaParseRequest) -> JSONResponse:
+    try:
+        parsed = parse_formula(payload.formula_text)
+    except FormulaParseError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"error": {"code": "formula_parse_error", "message": str(exc)}},
+        )
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"data": parsed.metadata()})
 
 
 @router.post("/jobs", status_code=status.HTTP_202_ACCEPTED)

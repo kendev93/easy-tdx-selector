@@ -140,3 +140,26 @@ def test_custom_universe_is_passed_to_adapter(tmp_path: Path) -> None:
     )
 
     assert report.total_candidates == 1
+
+
+def test_engine_scans_a_custom_formula_signal(tmp_path: Path) -> None:
+    ref = StockRef(market="SH", code="600000", path=tmp_path / "sh600000.day")
+    adapter = FakeAdapter([ref], {ref.code: make_bars()})
+    custom_config = ScanConfig(
+        selected_signals=("custom.accumulation",),
+        combine_mode="any",
+        minimum_matches=None,
+        universe="all",
+        universe_file=None,
+        vipdoc_path=str(tmp_path),
+        workers=1,
+        period="daily",
+        formula_text="N:=5; ACCUMULATION:IF(C<2,1,0);",
+        formula_parameters={"N": 5},
+    )
+
+    report = ScreenEngine(adapter).scan(custom_config)
+
+    assert len(report.results) == 1
+    assert report.results[0].matched_signals == ("custom.accumulation",)
+    assert "custom.ACCUMULATION" in report.results[0].indicator_values

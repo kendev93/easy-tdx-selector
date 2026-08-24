@@ -1,13 +1,37 @@
 import type {
   CombineMode,
+  CustomFormulaMetadata,
   FormulaScreenMetadata,
   ScanPayload,
   ScreenFormState,
   ScreenResult,
 } from '../types'
 
-export function validateScreenForm(form: ScreenFormState): Record<string, string> {
+export function validateScreenForm(
+  form: ScreenFormState,
+  customMetadata: CustomFormulaMetadata | null = null,
+): Record<string, string> {
   const errors: Record<string, string> = {}
+  if (form.mode === 'custom') {
+    if (!form.formulaText.trim()) {
+      errors.formulaText = '请输入通达信公式。'
+    } else if (!customMetadata) {
+      errors.formulaText = '请先点击“解析公式”，确认参数和输出信号。'
+    }
+    if (customMetadata) {
+      for (const parameter of customMetadata.parameters) {
+        const value = form.formulaParameters[parameter.name]
+        if (!Number.isFinite(value) || value < parameter.minimum || value > parameter.maximum) {
+          errors.formulaParameters = `参数 ${parameter.name} 必须在 ${parameter.minimum} 到 ${parameter.maximum} 之间。`
+          break
+        }
+        if (parameter.step === 1 && !Number.isInteger(value)) {
+          errors.formulaParameters = `参数 ${parameter.name} 必须是整数。`
+          break
+        }
+      }
+    }
+  }
   if (form.selectedSignals.length === 0) {
     errors.selectedSignals = '至少选择一个选股条件。'
   }
@@ -37,13 +61,18 @@ export function buildScanPayload(form: ScreenFormState): ScanPayload {
     vipdoc_path: form.vipdocPath.trim(),
     workers: form.workers,
     period: form.period,
+    formula_text: form.mode === 'custom' ? form.formulaText.trim() || null : null,
+    formula_parameters: form.mode === 'custom' ? { ...form.formulaParameters } : {},
   }
 }
 
 export function signalDisplayName(
   signalId: string,
   metadata: FormulaScreenMetadata | null,
+  customMetadata: CustomFormulaMetadata | null = null,
 ): string {
+  const customSignal = customMetadata?.signals.find((candidate) => candidate.id === signalId)
+  if (customSignal) return customSignal.display_name
   for (const indicator of metadata?.indicators ?? []) {
     const signal = indicator.signals.find((candidate) => candidate.id === signalId)
     if (signal) return signal.display_name

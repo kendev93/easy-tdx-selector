@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 
-import { createJob, fetchMetadata, FormulaScreenApiError, getJob, getResults } from '../api/formulaScreen'
-import type { FormulaScreenMetadata, JobState, ResultsMeta, ScreenFormState, ScreenResult } from '../types'
+import { createJob, fetchMetadata, FormulaScreenApiError, getJob, getResults, parseFormula } from '../api/formulaScreen'
+import type { CustomFormulaMetadata, FormulaScreenMetadata, JobState, ResultsMeta, ScreenFormState, ScreenResult } from '../types'
 import { buildScanPayload, resultsToCsv, signalDisplayName, validateScreenForm } from '../utils/formulaScreen'
 
 const metadata = ref<FormulaScreenMetadata | null>(null)
+const customMetadata = ref<CustomFormulaMetadata | null>(null)
 const form = reactive<ScreenFormState>({
+  mode: 'preset',
   selectedSignals: [],
   combineMode: 'at_least',
   minimumMatches: 2,
@@ -15,6 +17,8 @@ const form = reactive<ScreenFormState>({
   vipdocPath: '',
   workers: 2,
   period: 'daily',
+  formulaText: '',
+  formulaParameters: {},
 })
 const errors = ref<Record<string, string>>({})
 const message = ref('')
@@ -22,9 +26,20 @@ const loading = ref(false)
 const job = ref<JobState | null>(null)
 const results = ref<ScreenResult[]>([])
 const resultMeta = ref<ResultsMeta | null>(null)
+const customParseLoading = ref(false)
+const customParseError = ref('')
 
 const progressPercent = computed(() => Math.round((job.value?.progress ?? 0) * 100))
-const canSubmit = computed(() => !loading.value && metadata.value !== null)
+const canSubmit = computed(() => !loading.value && !customParseLoading.value && metadata.value !== null)
+
+function setMode(mode: ScreenFormState['mode']): void {
+  if (form.mode === mode) return
+  form.mode = mode
+  form.selectedSignals = []
+  errors.value = {}
+  message.value = ''
+  customParseError.value = ''
+}
 
 function toggleSignal(signalId: string, checked: boolean): void {
   const next = new Set(form.selectedSignals)
@@ -37,6 +52,33 @@ function toggleSignal(signalId: string, checked: boolean): void {
 function apiMessage(error: unknown): string {
   if (error instanceof FormulaScreenApiError) return error.message
   return '扫描失败，请检查后端服务、数据目录和配置后重试。'
+}
+
+async function parseCustomFormula(): Promise<void> {
+  customParseError.value = ''
+  if (!form.formulaText.trim()) {
+    customParseError.value = '请输入通达信公式后再解析。'
+    return
+  }
+  customParseLoading.value = true
+  try {
+    const parsed = await parseFormula(form.formulaText)
+    customMetadata.value = parsed
+    form.formulaParameters = Object.fromEntries(
+      parsed.parameters.map((parameter) => [parameter.name, parameter.default]),
+    )
+    form.selectedSignals = parsed.signals.map((signal) => signal.id)
+    errors.value = {}
+    message.value = `公式解析完成：已识别 ${parsed.parameters.length} 个参数、${parsed.signals.length} 个输出信号。`
+  } catch (error) {
+    customMetadata.value = null
+    form.selectedSignals = []
+    customParseError.value = error instanceof FormulaScreenApiError
+      ? error.message
+      : '公式解析失败，请检查语法和函数是否受支持。'
+  } finally {
+    customParseLoading.value = false
+  }
 }
 
 async function pollUntilFinished(jobId: string): Promise<void> {
@@ -56,7 +98,7 @@ async function pollUntilFinished(jobId: string): Promise<void> {
 }
 
 async function submit(): Promise<void> {
-  errors.value = validateScreenForm(form)
+  errors.value = validateScreenForm(form, customMetadata.value)
   message.value = ''
   if (Object.values(errors.value).some(Boolean)) return
 
@@ -144,6 +186,33 @@ onMounted(async () => {
             <span class="required-hint">* 必填</span>
           </div>
 
+          <div class="formula-mode-tabs" data-testid="formula-mode" role="tablist" aria-label="公式来源">
+            <button type="button" :class="{ active: form.mode === 'preset' }" data-testid="mode-preset" role="tab" :aria-selected="form.mode === 'preset'" @click="setMode('preset')">预置指标</button>
+            <button type="button" :class="{ active: form.mode === 'custom' }" data-testid="mode-custom" role="tab" :aria-selected="form.mode === 'custom'" @click="setMode('custom')">自定义公式</button>
+          </div>
+
+          <fieldset v-if="form.mode === 'custom'" class="form-section custom-formula-section">
+            <legend>粘贴通达信公式</legend>
+            <textarea v-model="form.formulaText" data-testid="custom-formula" rows="8" spellcheck="false" placeholder="例如：N:=5; SIGNAL:CROSS(C,REF(C,N));"></textarea>
+            <button class="secondary-button" data-testid="parse-formula" type="button" :disabled="customParseLoading" @click="parseCustomFormula">
+              {{ customParseLoading ? '解析中…' : '解析公式' }}
+            </button>
+            <p class="helper">支持常用数组函数：REF、SMA、EMA、MA、LLV、HHV、BARSLAST、COUNT、CROSS、IF、MAX、MIN、ABS。参数需用 <code>名称:=数值</code> 显式声明。</p>
+            <p v-if="customParseError" class="field-error" data-testid="formula-parse-error">{{ customParseError }}</p>
+            <div v-if="customMetadata" class="custom-formula-meta" data-testid="custom-formula-meta">
+              <span>已识别 {{ customMetadata.parameters.length }} 个参数</span>
+              <span>{{ customMetadata.signals.length }} 个输出</span>
+              <span>至少 {{ customMetadata.minimum_bars }} 根 K 线</span>
+            </div>
+            <div v-if="customMetadata?.parameters.length" class="parameter-grid">
+              <div v-for="parameter in customMetadata.parameters" :key="parameter.name">
+                <label :for="`formula-param-${parameter.name}`">{{ parameter.name }}</label>
+                <input :id="`formula-param-${parameter.name}`" v-model.number="form.formulaParameters[parameter.name]" :data-testid="`formula-param-${parameter.name}`" type="number" :min="parameter.minimum" :max="parameter.maximum" :step="parameter.step">
+              </div>
+            </div>
+            <p v-if="errors.formulaParameters" class="field-error">{{ errors.formulaParameters }}</p>
+          </fieldset>
+
           <fieldset class="form-section">
             <legend>数据源</legend>
             <label for="vipdoc-path">vipdoc 数据目录 <span class="required">*</span></label>
@@ -168,15 +237,28 @@ onMounted(async () => {
           <fieldset class="form-section signal-section">
             <legend>选择信号 <span class="legend-count">{{ form.selectedSignals.length }} selected</span></legend>
             <p v-if="errors.selectedSignals" class="field-error" data-testid="signals-error">{{ errors.selectedSignals }}</p>
-            <div v-if="!metadata" class="skeleton-list" aria-label="正在加载信号"></div>
-            <div v-for="indicator in metadata?.indicators ?? []" :key="indicator.id" class="indicator-block">
-              <div class="indicator-heading"><strong>{{ indicator.display_name }}</strong><small>建议预热 {{ indicator.recommended_bars }} 根 · 最少 {{ indicator.minimum_bars }} 根</small></div>
-              <label v-for="signal in indicator.signals" :key="signal.id" class="signal-option" :for="signal.id">
-                <input :id="signal.id" :data-testid="`signal-${signal.id}`" type="checkbox" :checked="form.selectedSignals.includes(signal.id)" @change="toggleSignal(signal.id, ($event.target as HTMLInputElement).checked)">
-                <span class="fake-checkbox" aria-hidden="true"></span>
-                <span class="signal-copy"><strong>{{ signal.display_name }}</strong><small>{{ signal.description }}</small></span>
-              </label>
-            </div>
+            <template v-if="form.mode === 'preset'">
+              <div v-if="!metadata" class="skeleton-list" aria-label="正在加载信号"></div>
+              <div v-for="indicator in metadata?.indicators ?? []" :key="indicator.id" class="indicator-block">
+                <div class="indicator-heading"><strong>{{ indicator.display_name }}</strong><small>建议预热 {{ indicator.recommended_bars }} 根 · 最少 {{ indicator.minimum_bars }} 根</small></div>
+                <label v-for="signal in indicator.signals" :key="signal.id" class="signal-option" :for="signal.id">
+                  <input :id="signal.id" :data-testid="`signal-${signal.id}`" type="checkbox" :checked="form.selectedSignals.includes(signal.id)" @change="toggleSignal(signal.id, ($event.target as HTMLInputElement).checked)">
+                  <span class="fake-checkbox" aria-hidden="true"></span>
+                  <span class="signal-copy"><strong>{{ signal.display_name }}</strong><small>{{ signal.description }}</small></span>
+                </label>
+              </div>
+            </template>
+            <template v-else>
+              <p v-if="!customMetadata" class="helper">先粘贴公式并点击“解析公式”，再选择要参与扫描的输出。</p>
+              <div v-for="signal in customMetadata?.signals ?? []" :key="signal.id" class="indicator-block">
+                <div class="indicator-heading"><strong>公式输出</strong><small>{{ customMetadata?.minimum_bars }} 根预热</small></div>
+                <label class="signal-option" :for="`custom-${signal.id}`">
+                  <input :id="`custom-${signal.id}`" :data-testid="`custom-signal-${signal.id}`" type="checkbox" :checked="form.selectedSignals.includes(signal.id)" @change="toggleSignal(signal.id, ($event.target as HTMLInputElement).checked)">
+                  <span class="fake-checkbox" aria-hidden="true"></span>
+                  <span class="signal-copy"><strong>{{ signal.display_name }}</strong><small>{{ signal.description }}</small></span>
+                </label>
+              </div>
+            </template>
           </fieldset>
 
           <fieldset class="form-section">
@@ -233,7 +315,7 @@ onMounted(async () => {
                   <td><strong class="code">{{ result.code }}</strong></td>
                   <td class="muted-code">{{ result.signal_date }}</td>
                   <td><strong>{{ result.last_close.toFixed(2) }}</strong></td>
-                  <td><div class="signal-tags"><span v-for="signal in result.matched_signals" :key="signal" class="signal-tag">{{ signalDisplayName(signal, metadata) }}</span><small>{{ result.match_count }} 条</small></div></td>
+                  <td><div class="signal-tags"><span v-for="signal in result.matched_signals" :key="signal" class="signal-tag">{{ signalDisplayName(signal, metadata, customMetadata) }}</span><small>{{ result.match_count }} 条</small></div></td>
                   <td><div class="value-list"><span v-for="(value, name) in result.indicator_values" :key="name"><b>{{ name.split('.').at(-1) }}</b> {{ value === null ? '—' : value.toFixed(2) }}</span></div></td>
                 </tr>
               </tbody>

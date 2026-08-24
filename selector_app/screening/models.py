@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
 
@@ -21,6 +21,13 @@ class ScanConfig:
     vipdoc_path: str
     workers: int
     period: str
+    formula_text: str | None = None
+    formula_parameters: Mapping[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "formula_parameters", MappingProxyType(dict(self.formula_parameters))
+        )
 
 
 @dataclass(frozen=True)

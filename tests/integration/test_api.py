@@ -71,6 +71,38 @@ def test_invalid_signal_is_rejected_without_stack_trace(tmp_path: Path) -> None:
     assert "Traceback" not in response.text
 
 
+def test_custom_formula_parse_returns_parameters_and_outputs() -> None:
+    with TestClient(create_app(engine=EmptyEngine())) as client:
+        response = client.post(
+            "/api/v1/formula-screen/parse",
+            json={"formula_text": "N:=5; BREAKOUT:CROSS(C,REF(C,N));"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["parameters"][0]["name"] == "N"
+    assert data["parameters"][0]["default"] == 5
+    assert data["signals"][0]["id"] == "custom.breakout"
+
+
+def test_custom_formula_unsafe_input_is_rejected(tmp_path: Path) -> None:
+    payload = valid_payload(tmp_path)
+    payload.update(
+        {
+            "formula_text": "X:__import__('os').system('id');",
+            "selected_signals": ["custom.x"],
+            "combine_mode": "any",
+            "minimum_matches": None,
+        }
+    )
+
+    with TestClient(create_app(engine=EmptyEngine())) as client:
+        response = client.post("/api/v1/formula-screen/jobs", json=payload)
+
+    assert response.status_code == 422
+    assert "Traceback" not in response.text
+
+
 def test_invalid_combine_mode_and_missing_vipdoc_are_rejected(tmp_path: Path) -> None:
     payload = valid_payload(tmp_path)
     payload["combine_mode"] = "invalid"
