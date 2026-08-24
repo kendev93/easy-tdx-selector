@@ -1,0 +1,11 @@
+# Top-level runtime pins for the audited Python 3.13 environment.
+# Transitive dependencies are resolved by pip from these exact direct pins;
+# change this file only as part of the documented easy-tdx upgrade procedure.
+easy-tdx==1.20.8
+fastapi==0.135.1
+numpy==2.3.5
+pandas==2.3.3
+pydantic==2.12.5
+starlette==0.52.1
+tzdata==2025.3
+uvicorn==0.42.0

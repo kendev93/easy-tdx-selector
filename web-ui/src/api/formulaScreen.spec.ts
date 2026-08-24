@@ -1,0 +1,38 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { createJob, fetchMetadata, FormulaScreenApiError, getJob, getResults } from './formulaScreen'
+
+describe('formula screen API client', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('fetches metadata and unwraps the data envelope', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { indicators: [] } }), { status: 200 })))
+
+    await expect(fetchMetadata()).resolves.toEqual({ indicators: [] })
+    expect(fetch).toHaveBeenCalledWith('/api/v1/formula-screen/metadata', expect.objectContaining({ headers: { 'Content-Type': 'application/json' } }))
+  })
+
+  it('posts a scan job and URL-encodes job ids for reads', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'job/1', status: 'queued' } }), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'job/1', status: 'completed' } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const payload = { selected_signals: ['indicator_three.begin_zone'], combine_mode: 'any' as const, minimum_matches: null, universe: 'all' as const, universe_file: null, vipdoc_path: '/tmp', workers: 1, period: 'daily' as const }
+    await expect(createJob(payload)).resolves.toEqual({ job_id: 'job/1', status: 'queued' })
+    await expect(getJob('job/1')).resolves.toMatchObject({ status: 'completed' })
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(payload)
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/formula-screen/jobs/job%2F1')
+  })
+
+  it('reads results and exposes structured API errors', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [], meta: { total_signals: 0 } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: '路径无效' } }), { status: 422 })))
+
+    await expect(getResults('job-1')).resolves.toEqual({ results: [], meta: { total_signals: 0 } })
+    await expect(fetchMetadata()).rejects.toEqual(expect.objectContaining({
+      name: 'FormulaScreenApiError', message: '路径无效', status: 422,
+    } satisfies Partial<FormulaScreenApiError>))
+  })
+})

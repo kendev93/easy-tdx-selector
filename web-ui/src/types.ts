@@ -1,0 +1,79 @@
+export type CombineMode = 'all' | 'any' | 'at_least'
+export type Universe = 'all' | 'sh' | 'sz' | 'custom'
+
+export interface SignalDefinition {
+  id: string
+  display_name: string
+  description: string
+}
+
+export interface IndicatorDefinition {
+  id: string
+  display_name: string
+  minimum_bars: number
+  recommended_bars: number
+  signals: SignalDefinition[]
+}
+
+export interface FormulaScreenMetadata {
+  indicators: IndicatorDefinition[]
+  combine_modes: { value: CombineMode; label: string }[]
+  supported_markets: string[]
+  supported_universe: { value: Universe; label: string }[]
+  periods: { value: 'daily'; label: string }[]
+  data_directory_help: string
+}
+
+export interface ScreenFormState {
+  selectedSignals: string[]
+  combineMode: CombineMode
+  minimumMatches: number | null
+  universe: Universe
+  universeFile: string
+  vipdocPath: string
+  workers: number
+  period: 'daily'
+}
+
+export interface ScanPayload {
+  selected_signals: string[]
+  combine_mode: CombineMode
+  minimum_matches: number | null
+  universe: Universe
+  universe_file: string | null
+  vipdoc_path: string
+  workers: number
+  period: 'daily'
+}
+
+export interface JobState {
+  job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  progress: number
+  total_candidates: number
+  total_scanned: number
+  total_signals: number
+  errors: number
+  skipped: number
+  error: string | null
+}
+
+export interface ScreenResult {
+  market: string
+  code: string
+  signal_date: number
+  last_close: number
+  matched_signals: string[]
+  match_count: number
+  indicator_values: Record<string, number | null>
+}
+
+export interface ResultsMeta {
+  total_candidates: number
+  total_scanned: number
+  total_signals: number
+  errors: number
+  skipped: number
+  failure_reasons: Record<string, number>
+  skip_reasons: Record<string, number>
+}
