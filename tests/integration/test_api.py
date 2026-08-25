@@ -59,6 +59,14 @@ def test_metadata_returns_signals_modes_and_supported_markets() -> None:
     assert data["supported_markets"] == ["SH", "SZ"]
 
 
+def test_health_endpoint_is_lightweight_and_does_not_require_vipdoc() -> None:
+    with TestClient(create_app(engine=EmptyEngine())) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def test_invalid_signal_is_rejected_without_stack_trace(tmp_path: Path) -> None:
     payload = valid_payload(tmp_path)
     payload["selected_signals"] = ["unknown.signal"]

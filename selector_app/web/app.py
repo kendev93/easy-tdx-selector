@@ -68,6 +68,10 @@ def create_app(
             content={"error": {"code": "internal_error", "message": "服务器内部错误，请稍后重试"}},
         )
 
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
     app.include_router(formula_screen_router, prefix="/api/v1")
     return app
 

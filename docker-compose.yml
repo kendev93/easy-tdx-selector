@@ -1,0 +1,28 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - type: bind
+        source: ${VIPDOC_PATH:-./data/vipdoc}
+        target: /data/vipdoc
+        read_only: true
+    expose:
+      - "8000"
+    ports:
+      - "${API_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-5173}:80"
+    restart: unless-stopped

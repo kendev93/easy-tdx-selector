@@ -45,6 +45,23 @@ npm run dev
 
 浏览器打开 <http://127.0.0.1:5173/formula-screen>。Vite 会把 `/api` 请求代理到 `127.0.0.1:8000`。
 
+## Docker Compose 启动
+
+如果不想在宿主机安装 Python、easy-tdx 或 Node.js，可以直接使用 Docker：
+
+```bash
+cd /Users/chenken/Documents/code/easy-tdx-selector
+VIPDOC_PATH=/你的通达信目录/vipdoc docker compose up --build
+```
+
+浏览器打开 <http://127.0.0.1:5173/formula-screen>。容器内的后端固定把宿主机目录挂载为 `/data/vipdoc`，因此页面的 vipdoc 输入框填写：
+
+```text
+/data/vipdoc
+```
+
+数据卷是只读挂载。也可以先复制 `.env.example` 为 `.env`，配置 `VIPDOC_PATH`、`WEB_PORT` 和 `API_PORT`，再执行 `docker compose up --build -d`。查看状态使用 `docker compose ps`，停止使用 `docker compose down`。
+
 ## 配置 vipdoc
 
 页面中的 `vipdoc 数据目录` 应指向包含下列目录的通达信数据目录：
