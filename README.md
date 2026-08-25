@@ -53,16 +53,34 @@ npm run dev
 
 ```bash
 cd easy-tdx-selector
-VIPDOC_PATH=/你的通达信目录/vipdoc docker compose up --build
+docker compose up --build -d
 ```
 
-浏览器打开 <http://127.0.0.1:5173/formula-screen>。容器内的后端固定把宿主机目录挂载为 `/data/vipdoc`，因此页面的 vipdoc 输入框填写：
+这样克隆项目后即可直接启动页面和 API。Docker 会自动创建名为 `easy_tdx_selector_vipdoc` 的命名卷；如果卷还没有行情文件，页面仍然可以打开、解析自定义公式和配置扫描任务，但扫描结果会为空。
+
+如果本机已经安装通达信，推荐直接共享桌面端的 `vipdoc` 目录，而不是复制一份：
+
+```bash
+HOST_VIPDOC_PATH=/你的通达信目录/vipdoc \
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.local-vipdoc.yml \
+  up --build -d
+```
+
+这种模式将桌面端目录以只读方式直接挂载到容器，桌面端更新行情后容器立即可见。页面的 vipdoc 输入框填写：
 
 ```text
 /data/vipdoc
 ```
 
-数据卷是只读挂载。也可以先复制 `.env.example` 为 `.env`，配置 `VIPDOC_PATH`、`WEB_PORT` 和 `API_PORT`，再执行 `docker compose up --build -d`。查看状态使用 `docker compose ps`，停止使用 `docker compose down`。
+无通达信模式使用持久化 named volume；普通 `docker compose down` 或删除容器不会删除数据。共享模式使用宿主机原目录，容器不会拥有或删除宿主机行情文件。不要使用 `docker compose down -v` 或执行 `docker volume rm easy_tdx_selector_vipdoc`，除非确认要删除无通达信模式下的行情数据。查看卷使用 `docker volume inspect easy_tdx_selector_vipdoc`，查看状态使用 `docker compose ps`，停止使用 `docker compose down`。`WEB_PORT` 和 `API_PORT` 仍可通过 `.env` 修改。
+
+如果只想把已有数据复制进 Docker，而不持续共享桌面端目录，仍可使用：
+
+```bash
+sh scripts/import_vipdoc.sh /你的通达信目录/vipdoc
+```
 
 ## 配置 vipdoc
 

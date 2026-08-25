@@ -6,8 +6,8 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
     volumes:
-      - type: bind
-        source: ${VIPDOC_PATH:-./data/vipdoc}
+      - type: volume
+        source: vipdoc_data
         target: /data/vipdoc
         read_only: true
     expose:
@@ -26,3 +26,7 @@ services:
     ports:
       - "${WEB_PORT:-5173}:80"
     restart: unless-stopped
+
+volumes:
+  vipdoc_data:
+    name: easy_tdx_selector_vipdoc
