@@ -9,6 +9,7 @@ treated as stocks.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,21 @@ MarketCode = Literal["SH", "SZ"]
 
 _CODE_PATTERN = re.compile(r"^\d{6}$")
 _MARKET_PATTERN = re.compile(r"^(SH|SZ)[:\s-]?([0-9]{6})$", re.IGNORECASE)
+
+
+def suggested_vipdoc_path() -> str:
+    """Suggest a usable path for the UI without requiring a manual first entry."""
+
+    configured = os.getenv("SELECTOR_VIPDOC_PATH")
+    if configured:
+        return str(Path(configured).expanduser())
+    container_path = Path("/data/vipdoc")
+    if container_path.is_dir():
+        return str(container_path)
+    try:
+        return str(resolve_vipdoc(None))
+    except Exception:  # noqa: BLE001 - suggestion must never block metadata
+        return "/data/vipdoc"
 
 
 @dataclass(frozen=True)

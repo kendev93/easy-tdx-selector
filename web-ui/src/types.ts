@@ -23,6 +23,7 @@ export interface FormulaScreenMetadata {
   supported_universe: { value: Universe; label: string }[]
   periods: { value: 'daily'; label: string }[]
   data_directory_help: string
+  default_vipdoc_path?: string
 }
 
 export interface CustomParameterDefinition {

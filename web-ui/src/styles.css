@@ -75,6 +75,10 @@ input:focus, select:focus { border-color: var(--accent); }
 .helper, .privacy-note { margin: 8px 0 0; color: var(--subtle); font-size: 10px; line-height: 1.5; }
 .helper code { color: #c4b5fd; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .field-error { margin: 7px 0 0; color: var(--danger); font-size: 11px; line-height: 1.4; }
+.advanced-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 38px; margin: 3px 0; padding: 0 10px; border: 1px dashed var(--border-strong); border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 700; text-align: left; }
+.advanced-toggle:hover { border-color: var(--accent); color: var(--accent); }
+.advanced-toggle small { color: var(--subtle); font-size: 9px; font-weight: 400; }
+.advanced-settings { margin-bottom: 2px; border-bottom: 1px solid rgba(59, 80, 110, 0.45); }
 .custom-formula-section textarea { display: block; width: 100%; min-height: 150px; resize: vertical; padding: 11px; border: 1px solid var(--border-strong); border-radius: 6px; outline: none; background: #080f20; color: #d9f99d; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.55; }
 .custom-formula-section textarea:focus { border-color: var(--accent); }
 .secondary-button { min-height: 36px; margin-top: 9px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--surface-raised); color: var(--text); cursor: pointer; font-size: 11px; font-weight: 700; }

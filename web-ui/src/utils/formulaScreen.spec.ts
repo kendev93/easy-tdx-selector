@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import type { ScreenFormState } from '../types'
 import {
+  DEFAULT_PRESET_SIGNALS,
   buildScanPayload,
   combineModeLabel,
+  loadSavedForm,
   resultsToCsv,
+  saveForm,
   validateScreenForm,
 } from './formulaScreen'
 
@@ -23,6 +26,16 @@ const baseForm = (): ScreenFormState => ({
 })
 
 describe('formula screen form helpers', () => {
+  it('provides useful preset defaults and remembers configuration locally', () => {
+    expect(DEFAULT_PRESET_SIGNALS).toEqual([
+      'indicator_three.prepare_rally',
+      'indicator_three.accumulation_zone',
+    ])
+    saveForm({ ...baseForm(), vipdocPath: '/data/vipdoc' })
+
+    expect(loadSavedForm()).toMatchObject({ vipdocPath: '/data/vipdoc', mode: 'preset' })
+  })
+
   it('rejects an empty selection and invalid minimum matches', () => {
     const form = { ...baseForm(), selectedSignals: [], minimumMatches: 2 }
 

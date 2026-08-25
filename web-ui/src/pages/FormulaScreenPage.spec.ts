@@ -28,11 +28,13 @@ const metadata: FormulaScreenMetadata = {
   supported_universe: [{ value: 'all', label: '沪深全部 A 股' }],
   periods: [{ value: 'daily', label: '日线' }],
   data_directory_help: '本地目录',
+  default_vipdoc_path: '/data/vipdoc',
 }
 
 describe('FormulaScreenPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     vi.mocked(api.fetchMetadata).mockResolvedValue(metadata)
     vi.mocked(api.parseFormula).mockResolvedValue({
       parameters: [{ name: 'N', default: 5, minimum: 1, maximum: 10000, step: 1 }],
@@ -57,9 +59,22 @@ describe('FormulaScreenPage', () => {
 
     expect(wrapper.get('[data-testid="formula-screen-page"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="signal-indicator_three.prepare_rally"]')).toBeTruthy()
+    expect((wrapper.get('[data-testid="vipdoc-path"]').element as HTMLInputElement).value).toBe('/data/vipdoc')
+    for (const checkbox of wrapper.findAll('input[type="checkbox"]')) {
+      if ((checkbox.element as HTMLInputElement).checked) await checkbox.setValue(false)
+    }
     await wrapper.get('[data-testid="screen-config"]').trigger('submit')
     expect(wrapper.get('[data-testid="signals-error"]').text()).toContain('至少选择')
     expect(api.createJob).not.toHaveBeenCalled()
+  })
+
+  it('keeps advanced settings collapsed until requested', async () => {
+    const wrapper = mount(FormulaScreenPage)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="advanced-settings"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
+    expect(wrapper.get('[data-testid="advanced-settings"]').text()).toContain('市场范围')
   })
 
   it('submits selected signals, shows results, and keeps export controls', async () => {
@@ -68,6 +83,7 @@ describe('FormulaScreenPage', () => {
     await wrapper.get('[data-testid="vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="signal-indicator_three.prepare_rally"]').setValue(true)
     await wrapper.get('[data-testid="signal-indicator_three.accumulation_zone"]').setValue(true)
+    await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
     await wrapper.get('[data-testid="minimum-matches"]').setValue(2)
     await wrapper.get('[data-testid="screen-config"]').trigger('submit')
     await flushPromises()
@@ -95,6 +111,7 @@ describe('FormulaScreenPage', () => {
     await flushPromises()
     await wrapper.get('[data-testid="vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="signal-indicator_three.prepare_rally"]').setValue(true)
+    await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
     await wrapper.get('[data-testid="minimum-matches"]').setValue(1)
     await wrapper.get('[data-testid="screen-config"]').trigger('submit')
     await flushPromises()
@@ -114,6 +131,7 @@ describe('FormulaScreenPage', () => {
     expect(wrapper.get('[data-testid="custom-signal-custom.breakout"]')).toBeTruthy()
     await wrapper.get('[data-testid="formula-param-N"]').setValue(7)
     await wrapper.get('[data-testid="vipdoc-path"]').setValue('/data/vipdoc')
+    await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
     await wrapper.get('[data-testid="combine-mode"]').setValue('any')
     await wrapper.get('[data-testid="screen-config"]').trigger('submit')
     await flushPromises()

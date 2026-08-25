@@ -1,24 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 
 import { createJob, fetchMetadata, FormulaScreenApiError, getJob, getResults, parseFormula } from '../api/formulaScreen'
 import type { CustomFormulaMetadata, FormulaScreenMetadata, JobState, ResultsMeta, ScreenFormState, ScreenResult } from '../types'
-import { buildScanPayload, resultsToCsv, signalDisplayName, validateScreenForm } from '../utils/formulaScreen'
+import { buildScanPayload, DEFAULT_PRESET_SIGNALS, loadSavedForm, resultsToCsv, saveForm, signalDisplayName, validateScreenForm } from '../utils/formulaScreen'
 
 const metadata = ref<FormulaScreenMetadata | null>(null)
 const customMetadata = ref<CustomFormulaMetadata | null>(null)
+const savedForm = loadSavedForm()
 const form = reactive<ScreenFormState>({
-  mode: 'preset',
-  selectedSignals: [],
-  combineMode: 'at_least',
-  minimumMatches: 2,
-  universe: 'all',
-  universeFile: '',
-  vipdocPath: '',
-  workers: 2,
-  period: 'daily',
-  formulaText: '',
-  formulaParameters: {},
+  mode: savedForm.mode ?? 'preset',
+  selectedSignals: savedForm.selectedSignals ?? [...DEFAULT_PRESET_SIGNALS],
+  combineMode: savedForm.combineMode ?? 'at_least',
+  minimumMatches: savedForm.minimumMatches ?? 2,
+  universe: savedForm.universe ?? 'all',
+  universeFile: savedForm.universeFile ?? '',
+  vipdocPath: savedForm.vipdocPath ?? '',
+  workers: savedForm.workers ?? 2,
+  period: savedForm.period ?? 'daily',
+  formulaText: savedForm.formulaText ?? '',
+  formulaParameters: savedForm.formulaParameters ?? {},
 })
 const errors = ref<Record<string, string>>({})
 const message = ref('')
@@ -28,6 +29,7 @@ const results = ref<ScreenResult[]>([])
 const resultMeta = ref<ResultsMeta | null>(null)
 const customParseLoading = ref(false)
 const customParseError = ref('')
+const showAdvanced = ref(false)
 
 const progressPercent = computed(() => Math.round((job.value?.progress ?? 0) * 100))
 const canSubmit = computed(() => !loading.value && !customParseLoading.value && metadata.value !== null)
@@ -35,7 +37,7 @@ const canSubmit = computed(() => !loading.value && !customParseLoading.value && 
 function setMode(mode: ScreenFormState['mode']): void {
   if (form.mode === mode) return
   form.mode = mode
-  form.selectedSignals = []
+  form.selectedSignals = mode === 'preset' ? [...DEFAULT_PRESET_SIGNALS] : []
   errors.value = {}
   message.value = ''
   customParseError.value = ''
@@ -68,6 +70,10 @@ async function parseCustomFormula(): Promise<void> {
       parsed.parameters.map((parameter) => [parameter.name, parameter.default]),
     )
     form.selectedSignals = parsed.signals.map((signal) => signal.id)
+    form.minimumMatches = Math.min(
+      form.minimumMatches ?? 1,
+      Math.max(parsed.signals.length, 1),
+    )
     errors.value = {}
     message.value = `公式解析完成：已识别 ${parsed.parameters.length} 个参数、${parsed.signals.length} 个输出信号。`
   } catch (error) {
@@ -146,10 +152,18 @@ function exportCsv(): void {
 onMounted(async () => {
   try {
     metadata.value = await fetchMetadata()
+    if (!form.vipdocPath) {
+      form.vipdocPath = metadata.value.default_vipdoc_path ?? '/data/vipdoc'
+    }
+    if (form.mode === 'custom' && form.formulaText.trim()) {
+      await parseCustomFormula()
+    }
   } catch (error) {
     message.value = apiMessage(error)
   }
 })
+
+watch(form, (value) => saveForm(value), { deep: true })
 </script>
 
 <template>
@@ -217,22 +231,47 @@ onMounted(async () => {
             <legend>数据源</legend>
             <label for="vipdoc-path">vipdoc 数据目录 <span class="required">*</span></label>
             <input id="vipdoc-path" v-model="form.vipdocPath" data-testid="vipdoc-path" type="text" placeholder="例如 ~/new_tdx/vipdoc" autocomplete="off">
-            <p class="helper">{{ metadata?.data_directory_help ?? '请输入包含 sh/lday 和 sz/lday 的通达信 vipdoc 目录。' }}</p>
+            <p class="helper">{{ metadata?.data_directory_help ?? '默认使用 /data/vipdoc；也可以改成电脑上的实际目录。' }}</p>
             <p v-if="errors.vipdocPath" class="field-error">{{ errors.vipdocPath }}</p>
           </fieldset>
 
-          <fieldset class="form-section">
-            <legend>扫描范围</legend>
-            <label for="universe">市场范围</label>
-            <select id="universe" v-model="form.universe" data-testid="universe">
-              <option v-for="item in metadata?.supported_universe ?? []" :key="item.value" :value="item.value">{{ item.label }}</option>
-            </select>
-            <template v-if="form.universe === 'custom'">
-              <label for="universe-file">股票列表文件 <span class="required">*</span></label>
-              <input id="universe-file" v-model="form.universeFile" data-testid="universe-file" type="text" placeholder="每行 SH 600000 或 SZ 000001">
-              <p v-if="errors.universeFile" class="field-error">{{ errors.universeFile }}</p>
-            </template>
-          </fieldset>
+          <button class="advanced-toggle" data-testid="advanced-toggle" type="button" :aria-expanded="showAdvanced" @click="showAdvanced = !showAdvanced">
+            <span>{{ showAdvanced ? '收起高级设置' : '高级设置' }}</span>
+            <small>市场范围 · 条件组合 · 并发</small>
+          </button>
+
+          <div v-if="showAdvanced" class="advanced-settings" data-testid="advanced-settings">
+            <fieldset class="form-section">
+              <legend>扫描范围</legend>
+              <label for="universe">市场范围</label>
+              <select id="universe" v-model="form.universe" data-testid="universe">
+                <option v-for="item in metadata?.supported_universe ?? []" :key="item.value" :value="item.value">{{ item.label }}</option>
+              </select>
+              <template v-if="form.universe === 'custom'">
+                <label for="universe-file">股票列表文件 <span class="required">*</span></label>
+                <input id="universe-file" v-model="form.universeFile" data-testid="universe-file" type="text" placeholder="每行 SH 600000 或 SZ 000001">
+                <p v-if="errors.universeFile" class="field-error">{{ errors.universeFile }}</p>
+              </template>
+            </fieldset>
+
+            <fieldset class="form-section">
+              <legend>条件组合</legend>
+              <label for="combine-mode">组合方式</label>
+              <select id="combine-mode" v-model="form.combineMode" data-testid="combine-mode">
+                <option v-for="mode in metadata?.combine_modes ?? []" :key="mode.value" :value="mode.value">{{ mode.label }}</option>
+              </select>
+              <template v-if="form.combineMode === 'at_least'">
+                <label for="minimum-matches">最少满足条件数 <span class="required">*</span></label>
+                <input id="minimum-matches" v-model.number="form.minimumMatches" data-testid="minimum-matches" type="number" min="1" :max="Math.max(form.selectedSignals.length, 1)">
+                <p v-if="errors.minimumMatches" class="field-error">{{ errors.minimumMatches }}</p>
+              </template>
+            </fieldset>
+
+            <fieldset class="form-section compact-fields">
+              <div><label for="workers">并发进程数</label><input id="workers" v-model.number="form.workers" data-testid="workers" type="number" min="1" max="32"></div>
+              <div><label for="period">周期</label><select id="period" v-model="form.period" data-testid="period"><option value="daily">日线</option></select></div>
+            </fieldset>
+          </div>
 
           <fieldset class="form-section signal-section">
             <legend>选择信号 <span class="legend-count">{{ form.selectedSignals.length }} selected</span></legend>
@@ -259,24 +298,6 @@ onMounted(async () => {
                 </label>
               </div>
             </template>
-          </fieldset>
-
-          <fieldset class="form-section">
-            <legend>条件组合</legend>
-            <label for="combine-mode">组合方式</label>
-            <select id="combine-mode" v-model="form.combineMode" data-testid="combine-mode">
-              <option v-for="mode in metadata?.combine_modes ?? []" :key="mode.value" :value="mode.value">{{ mode.label }}</option>
-            </select>
-            <template v-if="form.combineMode === 'at_least'">
-              <label for="minimum-matches">最少满足条件数 <span class="required">*</span></label>
-              <input id="minimum-matches" v-model.number="form.minimumMatches" data-testid="minimum-matches" type="number" min="1" :max="Math.max(form.selectedSignals.length, 1)">
-              <p v-if="errors.minimumMatches" class="field-error">{{ errors.minimumMatches }}</p>
-            </template>
-          </fieldset>
-
-          <fieldset class="form-section compact-fields">
-            <div><label for="workers">并发进程数</label><input id="workers" v-model.number="form.workers" data-testid="workers" type="number" min="1" max="32"></div>
-            <div><label for="period">周期</label><select id="period" v-model="form.period" data-testid="period"><option value="daily">日线</option></select></div>
           </fieldset>
 
           <button class="primary-button" data-testid="start-scan" type="submit" :disabled="!canSubmit">

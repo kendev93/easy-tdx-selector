@@ -17,6 +17,8 @@
 - 公式层安全除零、数据不足跳过、无未来数据；
 - Python 单元/集成测试、Vue 单元测试和 Playwright E2E 流程。
 
+首次进入页面时，预置模式会默认选中“准备拉升”和“建仓区”，Docker 模式自动填入 `/data/vipdoc`；市场范围、条件组合、并发和周期收在“高级设置”中。页面会在浏览器本地记住上次配置，不会上传这些配置。
+
 ## 启动
 
 要求 Python 3.10–3.13、Node.js 20+。推荐创建虚拟环境：
@@ -50,7 +52,7 @@ npm run dev
 如果不想在宿主机安装 Python、easy-tdx 或 Node.js，可以直接使用 Docker：
 
 ```bash
-cd /Users/chenken/Documents/code/easy-tdx-selector
+cd easy-tdx-selector
 VIPDOC_PATH=/你的通达信目录/vipdoc docker compose up --build
 ```
 

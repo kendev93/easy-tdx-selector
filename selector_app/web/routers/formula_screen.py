@@ -8,6 +8,7 @@ from typing import cast
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
 
+from selector_app.adapters.easy_tdx_adapter import suggested_vipdoc_path
 from selector_app.formulas.custom import FormulaParseError, parse_formula
 from selector_app.formulas.registry import FORMULA_REGISTRY
 from selector_app.screening.export import report_to_csv, report_to_json
@@ -49,6 +50,7 @@ def metadata() -> dict[str, object]:
                 "请输入通达信 vipdoc 目录；仅扫描 sh/sz lday 下的 A 股 .day 文件，"
                 "ETF、基金、指数和债券会被排除。"
             ),
+            "default_vipdoc_path": suggested_vipdoc_path(),
         }
     }
 

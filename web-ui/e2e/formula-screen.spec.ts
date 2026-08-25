@@ -23,6 +23,7 @@ test('user can configure a formula scan, view results, and export them', async (
   await page.getByTestId('vipdoc-path').fill('/tmp/vipdoc')
   await page.getByTestId('signal-indicator_three.prepare_rally').check()
   await page.getByTestId('signal-indicator_three.accumulation_zone').check()
+  await page.getByTestId('advanced-toggle').click()
   await page.getByTestId('minimum-matches').fill('2')
   await page.getByTestId('start-scan').click()
 
@@ -49,6 +50,7 @@ test('user can parse a custom formula and scan with an overridden parameter', as
   await expect(page.getByTestId('custom-formula-meta')).toContainText('1 个参数')
   await page.getByTestId('formula-param-N').fill('7')
   await page.getByTestId('vipdoc-path').fill('/tmp/vipdoc')
+  await page.getByTestId('advanced-toggle').click()
   await page.getByTestId('minimum-matches').fill('1')
   await page.getByTestId('start-scan').click()
 

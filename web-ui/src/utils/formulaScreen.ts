@@ -7,6 +7,58 @@ import type {
   ScreenResult,
 } from '../types'
 
+export const DEFAULT_PRESET_SIGNALS = [
+  'indicator_three.prepare_rally',
+  'indicator_three.accumulation_zone',
+]
+
+const FORM_STORAGE_KEY = 'easy-tdx-selector.form.v1'
+
+export function loadSavedForm(): Partial<ScreenFormState> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(FORM_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    if (!parsed || typeof parsed !== 'object') return {}
+    const safe: Partial<ScreenFormState> = {}
+    if (parsed.mode === 'preset' || parsed.mode === 'custom') safe.mode = parsed.mode
+    if (Array.isArray(parsed.selectedSignals) && parsed.selectedSignals.every((value) => typeof value === 'string')) {
+      safe.selectedSignals = parsed.selectedSignals as string[]
+    }
+    if (parsed.combineMode === 'all' || parsed.combineMode === 'any' || parsed.combineMode === 'at_least') {
+      safe.combineMode = parsed.combineMode
+    }
+    if (typeof parsed.minimumMatches === 'number' && Number.isFinite(parsed.minimumMatches)) safe.minimumMatches = parsed.minimumMatches
+    if (parsed.universe === 'all' || parsed.universe === 'sh' || parsed.universe === 'sz' || parsed.universe === 'custom') {
+      safe.universe = parsed.universe
+    }
+    if (typeof parsed.universeFile === 'string') safe.universeFile = parsed.universeFile
+    if (typeof parsed.vipdocPath === 'string') safe.vipdocPath = parsed.vipdocPath
+    if (typeof parsed.workers === 'number' && Number.isFinite(parsed.workers)) safe.workers = parsed.workers
+    if (parsed.period === 'daily') safe.period = parsed.period
+    if (typeof parsed.formulaText === 'string') safe.formulaText = parsed.formulaText
+    if (parsed.formulaParameters && typeof parsed.formulaParameters === 'object') {
+      const parameters = Object.fromEntries(
+        Object.entries(parsed.formulaParameters).filter(([, value]) => typeof value === 'number' && Number.isFinite(value)),
+      ) as Record<string, number>
+      safe.formulaParameters = parameters
+    }
+    return safe
+  } catch {
+    return {}
+  }
+}
+
+export function saveForm(form: ScreenFormState): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(FORM_STORAGE_KEY, JSON.stringify(form))
+  } catch {
+    // Private browsing and restricted storage should not block scanning.
+  }
+}
+
 export function validateScreenForm(
   form: ScreenFormState,
   customMetadata: CustomFormulaMetadata | null = null,
