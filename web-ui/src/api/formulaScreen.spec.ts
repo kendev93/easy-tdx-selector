@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createJob, fetchMetadata, FormulaScreenApiError, getJob, getResults, parseFormula } from './formulaScreen'
+import { createJob, createSyncJob, fetchMetadata, FormulaScreenApiError, getJob, getResults, getSyncJob, parseFormula } from './formulaScreen'
 
 describe('formula screen API client', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -45,5 +45,17 @@ describe('formula screen API client', () => {
     await expect(fetchMetadata()).rejects.toEqual(expect.objectContaining({
       name: 'FormulaScreenApiError', message: '路径无效', status: 422,
     } satisfies Partial<FormulaScreenApiError>))
+  })
+
+  it('creates and polls a market sync job', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'sync-1', status: 'queued' } }), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'sync-1', status: 'completed', progress: 1, total_candidates: 1, total_scanned: 1, errors: 0, error: null, result: { written_bars: 3 } } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(createSyncJob({ vipdoc_path: '/data/vipdoc' })).resolves.toEqual({ job_id: 'sync-1', status: 'queued' })
+    await expect(getSyncJob('sync-1')).resolves.toMatchObject({ status: 'completed', result: { written_bars: 3 } })
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/market-data/sync')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ vipdoc_path: '/data/vipdoc' })
   })
 })

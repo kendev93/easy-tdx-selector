@@ -103,3 +103,11 @@ class CustomFormulaParseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     formula_text: str = Field(min_length=1, max_length=20_000)
+
+
+class MarketSyncRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    universe: Literal["all", "sh", "sz"] = "all"
+    bars: int = Field(default=800, ge=1, le=800)
+    vipdoc_path: str | None = Field(default=None, max_length=1024)

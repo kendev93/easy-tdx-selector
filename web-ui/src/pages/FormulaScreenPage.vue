@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 
-import { createJob, fetchMetadata, FormulaScreenApiError, getJob, getResults, parseFormula } from '../api/formulaScreen'
-import type { CustomFormulaMetadata, FormulaScreenMetadata, JobState, ResultsMeta, ScreenFormState, ScreenResult } from '../types'
+import { createJob, createSyncJob, fetchMetadata, FormulaScreenApiError, getJob, getResults, getSyncJob, parseFormula } from '../api/formulaScreen'
+import type { CustomFormulaMetadata, FormulaScreenMetadata, JobState, MarketSyncJobState, ResultsMeta, ScreenFormState, ScreenResult } from '../types'
 import { buildScanPayload, DEFAULT_PRESET_SIGNALS, loadSavedForm, resultsToCsv, saveForm, signalDisplayName, validateScreenForm } from '../utils/formulaScreen'
 
 const metadata = ref<FormulaScreenMetadata | null>(null)
@@ -30,9 +30,11 @@ const resultMeta = ref<ResultsMeta | null>(null)
 const customParseLoading = ref(false)
 const customParseError = ref('')
 const showAdvanced = ref(false)
+const syncLoading = ref(false)
+const syncJob = ref<MarketSyncJobState | null>(null)
 
 const progressPercent = computed(() => Math.round((job.value?.progress ?? 0) * 100))
-const canSubmit = computed(() => !loading.value && !customParseLoading.value && metadata.value !== null)
+const canSubmit = computed(() => !loading.value && !syncLoading.value && !customParseLoading.value && metadata.value !== null)
 
 function setMode(mode: ScreenFormState['mode']): void {
   if (form.mode === mode) return
@@ -100,6 +102,33 @@ async function pollUntilFinished(jobId: string): Promise<void> {
     }
     if (state.status === 'failed') throw new Error(state.error ?? '扫描任务失败')
     await new Promise((resolve) => window.setTimeout(resolve, 250))
+  }
+}
+
+async function syncMarketData(): Promise<void> {
+  syncLoading.value = true
+  message.value = ''
+  try {
+    const created = await createSyncJob({ vipdoc_path: form.vipdocPath.trim() || undefined })
+    for (;;) {
+      const state = await getSyncJob(created.job_id)
+      syncJob.value = state
+      if (state.status === 'completed') {
+        const result = state.result
+        message.value = result
+          ? `行情同步完成：写入 ${result.written_bars} 根，更新 ${result.updated_files} 个文件。`
+          : '行情同步完成。'
+        return
+      }
+      if (state.status === 'failed') throw new Error(state.error ?? '行情同步失败')
+      await new Promise((resolve) => window.setTimeout(resolve, 250))
+    }
+  } catch (error) {
+    message.value = error instanceof FormulaScreenApiError
+      ? error.message
+      : '行情同步失败，请检查网络和 vipdoc 数据目录后重试。'
+  } finally {
+    syncLoading.value = false
   }
 }
 
@@ -300,10 +329,17 @@ watch(form, (value) => saveForm(value), { deep: true })
             </template>
           </fieldset>
 
-          <button class="primary-button" data-testid="start-scan" type="submit" :disabled="!canSubmit">
-            <span v-if="loading" class="spinner" aria-hidden="true"></span>
-            {{ loading ? '扫描中…' : '开始扫描' }}
-          </button>
+          <div class="action-stack">
+            <button class="primary-button" data-testid="start-scan" type="submit" :disabled="!canSubmit">
+              <span v-if="loading" class="spinner" aria-hidden="true"></span>
+              {{ loading ? '扫描中…' : '开始扫描' }}
+            </button>
+            <button class="sync-button" data-testid="sync-market-data" type="button" :disabled="loading || syncLoading" :aria-busy="syncLoading" @click="syncMarketData">
+              <span v-if="syncLoading" class="spinner sync-spinner" aria-hidden="true"></span>
+              {{ syncLoading ? '同步中…' : '同步最新行情' }}
+            </button>
+            <p class="sync-helper">从通达信服务器获取最新已完成日线，并写入共享 vipdoc。</p>
+          </div>
           <p class="privacy-note">数据在本机读取，页面不会上传行情文件。</p>
         </form>
 

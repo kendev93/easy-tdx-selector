@@ -56,3 +56,14 @@ test('user can parse a custom formula and scan with an overridden parameter', as
 
   await expect(page.getByTestId('results-table')).toContainText('600001')
 })
+
+test('user can sync latest market data from the shared vipdoc', async ({ page }) => {
+  await page.route('**/api/v1/formula-screen/metadata', (route) => route.fulfill({ json: { data: metadata } }))
+  await page.route('**/api/v1/market-data/sync', (route) => route.fulfill({ status: 202, json: { data: { job_id: 'sync-job', status: 'queued' } } }))
+  await page.route('**/api/v1/market-data/sync/jobs/sync-job', (route) => route.fulfill({ json: { data: { job_id: 'sync-job', status: 'completed', progress: 1, total_candidates: 2, total_scanned: 2, errors: 0, error: null, result: { total_candidates: 2, processed: 2, updated_files: 2, unchanged_files: 0, written_bars: 4, errors: 0, failure_reasons: {} } } } }))
+
+  await page.goto('/formula-screen')
+  await page.getByTestId('sync-market-data').click()
+
+  await expect(page.getByTestId('screen-message')).toContainText('写入 4 根')
+})

@@ -147,6 +147,39 @@ def test_job_creation_status_and_empty_results() -> None:
     assert result_response.json()["data"] == []
 
 
+def test_market_sync_job_can_be_created_and_polled(tmp_path: Path, monkeypatch) -> None:
+    class FakeMarketSync:
+        def sync(self, config, progress_callback=None):
+            if progress_callback:
+                progress_callback(1, 1)
+            return {
+                "total_candidates": 1,
+                "processed": 1,
+                "updated_files": 1,
+                "written_bars": 3,
+                "errors": 0,
+                "failure_reasons": {},
+            }
+
+    monkeypatch.setenv("SELECTOR_VIPDOC_PATH", str(tmp_path))
+    with TestClient(create_app(engine=EmptyEngine(), market_sync=FakeMarketSync())) as client:
+        response = client.post("/api/v1/market-data/sync", json={})
+        assert response.status_code == 202
+        job_id = response.json()["data"]["job_id"]
+        for _ in range(50):
+            status_response = client.get(f"/api/v1/market-data/sync/jobs/{job_id}")
+            assert status_response.status_code == 200
+            state = status_response.json()["data"]
+            if state["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("market sync job did not finish")
+
+    assert state["status"] == "completed"
+    assert state["result"]["written_bars"] == 3
+
+
 def test_unexpected_job_failure_does_not_expose_internal_stack_trace() -> None:
     class FailingEngine:
         def scan(self, config, progress_callback=None):

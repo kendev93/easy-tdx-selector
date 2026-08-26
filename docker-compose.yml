@@ -9,11 +9,10 @@ services:
       - type: volume
         source: vipdoc_data
         target: /data/vipdoc
-        read_only: true
     expose:
       - "8000"
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     restart: unless-stopped
 
   frontend:
@@ -24,7 +23,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "${WEB_PORT:-5173}:80"
+      - "127.0.0.1:${WEB_PORT:-5173}:80"
     restart: unless-stopped
 
 volumes:

@@ -14,7 +14,8 @@ COPY selector_app ./selector_app
 RUN python -m pip install --no-cache-dir --no-deps .
 
 RUN useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app
+    && mkdir -p /data/vipdoc \
+    && chown -R appuser:appuser /app /data
 USER appuser
 
 EXPOSE 8000

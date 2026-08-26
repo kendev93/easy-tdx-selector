@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from selector_app.adapters.market_sync import EasyTdxMarketSync
 from selector_app.screening.jobs import ScanEngineLike, ScreenJobRunner
 
 from .routers.formula_screen import router as formula_screen_router
@@ -22,6 +23,7 @@ def create_app(
     *,
     engine: ScanEngineLike | None = None,
     runner: ScreenJobRunner | None = None,
+    market_sync: EasyTdxMarketSync | object | None = None,
 ) -> FastAPI:
     owns_runner = runner is None
     selected_runner = runner or ScreenJobRunner(engine=engine)
@@ -39,6 +41,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.screen_job_runner = selected_runner
+    app.state.market_sync_service = market_sync or EasyTdxMarketSync()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -72,7 +75,10 @@ def create_app(
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    from .routers.market_data import router as market_data_router
+
     app.include_router(formula_screen_router, prefix="/api/v1")
+    app.include_router(market_data_router, prefix="/api/v1")
     return app
 
 

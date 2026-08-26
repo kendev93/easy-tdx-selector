@@ -16,8 +16,8 @@ ScreenJobRunner（进程内任务生命周期）
         ▼
 ScreenEngine ── FormulaRegistry ── 三组纯公式
         │
-        ▼
-EasyTdxAdapter ── easy_tdx 公共离线 API ── vipdoc/{sh,sz}/lday/*.day
+        ├── EasyTdxAdapter ── easy_tdx 公共离线 API ── vipdoc/{sh,sz}/lday/*.day
+        └── EasyTdxMarketSync ── easy_tdx 在线 API + .day 写入 API ──┘
 ```
 
 ## 分层规则
@@ -29,6 +29,8 @@ EasyTdxAdapter ── easy_tdx 公共离线 API ── vipdoc/{sh,sz}/lday/*.day
 - `web-ui/` 只做表单、请求状态和结果表，不计算公式。
 
 页面保留“预置指标”和“自定义公式”两种模式。自定义模式先将公式提交到 `/parse`：解析器只接受白名单 AST 节点和数组函数，不执行用户 Python；`名称:=数值` 被识别为参数，`名称:表达式` 被识别为可选输出。扫描请求携带原始公式、参数覆盖值和选中的 `custom.*` 输出。
+
+行情同步复用同一个 `ScreenJobRunner` 生命周期：`EasyTdxMarketSync` 通过公开的 `TdxClient.get_security_list_all()`、`get_security_bars()` 获取沪深 A 股日线，再通过 `easy_tdx.offline.find_daily_bar_file()` 和 `sync_daily_bars_from_security_bars()` 写回目标 `vipdoc`。默认目标是容器内 `/data/vipdoc`，因此 named volume 模式和本地 bind 模式都能使用同一套同步逻辑。
 
 ## 公式一致性约束
 
@@ -54,5 +56,7 @@ EasyTdxAdapter ── easy_tdx 公共离线 API ── vipdoc/{sh,sz}/lday/*.day
 - `GET /api/v1/formula-screen/jobs/{job_id}/results`
 - `GET /api/v1/formula-screen/jobs/{job_id}/export.json`
 - `GET /api/v1/formula-screen/jobs/{job_id}/export.csv`
+- `POST /api/v1/market-data/sync`
+- `GET /api/v1/market-data/sync/jobs/{job_id}`
 
 响应使用 `data`/`meta` 成功 envelope 和 `error.code/message` 错误 envelope；未处理异常写服务端日志但不会向前端发送 traceback。

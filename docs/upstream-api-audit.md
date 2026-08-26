@@ -23,7 +23,7 @@ from easy_tdx.offline import find_daily_bar_file, read_daily_bars, resolve_vipdo
 from easy_tdx import MyTT
 ```
 
-同步行情客户端公开提供 `TdxClient.connect()`、`close()`、`get_security_count()`、`get_security_list()`、`get_security_list_all()` 和 `get_security_bars()`；异步版本对应 `AsyncTdxClient`。本应用主要使用离线读取 API，因此扫描不依赖 TDX TCP 服务器。
+同步行情客户端公开提供 `TdxClient.connect()`、`close()`、`get_security_count()`、`get_security_list()`、`get_security_list_all()` 和 `get_security_bars()`；异步版本对应 `AsyncTdxClient`。本项目的行情同步服务使用同步客户端获取日线，公式扫描仍然读取已经落地的本地文件。
 
 ## 2. K 线字段和来源
 
@@ -47,7 +47,7 @@ from easy_tdx import MyTT
 vipdoc/{sh,sz}/lday/{exchange}{code}.day
 ```
 
-公开调用为 `resolve_vipdoc()`、`find_daily_bar_file(market, code, vipdoc=None)` 和 `read_daily_bars(filepath)`。文件读取使用 32 字节小端记录：`YYYYMMDD`、开盘、最高、最低、收盘、成交额、成交量及保留字段。上游根据文件名区分证券类型并使用价格/数量系数；本项目不重新实现该二进制解码，而把上游的 `SecurityBar` 转换成项目自己的只读 DataFrame。
+公开调用为 `resolve_vipdoc()`、`find_daily_bar_file(market, code, vipdoc=None)` 和 `read_daily_bars(filepath)`；写入侧还提供 `append_daily_bars()` 与 `sync_daily_bars_from_security_bars()`。文件读取/写入使用 32 字节小端记录：`YYYYMMDD`、开盘、最高、最低、收盘、成交额、成交量及保留字段。上游根据文件名区分证券类型并使用价格/数量系数；本项目不重新实现该二进制编解码，而把上游的 `SecurityBar` 转换成项目自己的 DataFrame，写入时使用 A 股系数 `price_coeff=0.01`、`vol_coeff=0.01`。
 
 本应用自己的 universe 过滤器只允许：
 
@@ -66,7 +66,7 @@ vipdoc/{sh,sz}/lday/{exchange}{code}.day
 
 `from easy_tdx.screen import SignalScanner` 确实可直接调用，但它的契约是：接收 `Strategy` 子类，在本地 `.day` 文件上提取策略买入信号，并输出简化的 `ScanResult(code, market, signal_date, last_close)`。它不支持本需求的公式一/二/三信号注册、AND/OR/至少 N 个条件合并、指标值回传，因此本项目没有强行复用它。
 
-上游已有 FastAPI 路由、`easy-tdx` CLI 和一个用于回测的进程内任务执行器。它们分别属于上游应用层；本项目的公式任务需要另一套结果字段和本地公式 registry，所以只在本项目内部提供轻量任务执行器，并不让业务代码依赖上游 `easy_tdx.web.*` 内部模块。上游在线 `get_security_bars()` 可以作为未来“在线取数适配器”的候选，但当前页面明确采用 `.day` 离线模式。
+上游已有 FastAPI 路由、`easy-tdx` CLI 和一个用于回测的进程内任务执行器。它们分别属于上游应用层；本项目的公式任务需要另一套结果字段和本地公式 registry，所以只在本项目内部提供轻量任务执行器，并不让业务代码依赖上游 `easy_tdx.web.*` 内部模块。本项目的 `EasyTdxMarketSync` 已使用上游在线 `get_security_list_all()`/`get_security_bars()` 加上 `.day` 写入 API；公式选股仍只消费本地已经完成的日线。
 
 ## 6. 本项目适配器和内部实现边界
 
@@ -76,9 +76,12 @@ vipdoc/{sh,sz}/lday/{exchange}{code}.day
 - `easy_tdx.offline.resolve_vipdoc`；
 - `easy_tdx.offline.find_daily_bar_file`；
 - `easy_tdx.offline.read_daily_bars`；
+- `easy_tdx.offline.get_last_bar_date`；
+- `easy_tdx.offline.sync_daily_bars_from_security_bars`；
+- `easy_tdx.TdxClient`、`Market`、`KlineCategory`、`SecurityBar`；
 - `easy_tdx.MyTT`（由公式层调用，但仍是上游公开模块）。
 
-没有使用上游的 `_detect_security_type`、协议 command、transport、`easy_tdx.web` 路由或 `easy_tdx.screen.scanner` 私有实现。上游的 `SecurityBar` 只在适配器中被转换，不会进入公式、扫描或 Web 路由。
+没有使用上游的 `_detect_security_type`、协议 command、transport、`easy_tdx.web` 路由或 `easy_tdx.screen.scanner` 私有实现。上游的 `SecurityBar` 只在适配器中被转换和写入，不会进入公式或 Web 路由。
 
 ## 7. 升级兼容风险
 

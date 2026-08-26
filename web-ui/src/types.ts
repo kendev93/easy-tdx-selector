@@ -86,6 +86,27 @@ export interface JobState {
   error: string | null
 }
 
+export interface MarketSyncResult {
+  total_candidates: number
+  processed: number
+  updated_files: number
+  unchanged_files: number
+  written_bars: number
+  errors: number
+  failure_reasons: Record<string, number>
+}
+
+export interface MarketSyncJobState {
+  job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  progress: number
+  total_candidates: number
+  total_scanned: number
+  errors: number
+  error: string | null
+  result: MarketSyncResult | null
+}
+
 export interface ScreenResult {
   market: string
   code: string

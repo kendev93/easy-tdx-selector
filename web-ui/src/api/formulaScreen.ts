@@ -2,12 +2,14 @@ import type {
   CustomFormulaMetadata,
   FormulaScreenMetadata,
   JobState,
+  MarketSyncJobState,
   ResultsMeta,
   ScanPayload,
   ScreenResult,
 } from '../types'
 
 const API_BASE = '/api/v1/formula-screen'
+const API_ROOT = '/api/v1'
 
 interface ApiErrorPayload {
   error?: { message?: string }
@@ -21,7 +23,11 @@ export class FormulaScreenApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  return requestAt<T>(`${API_BASE}${path}`, init)
+}
+
+async function requestAt<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
   })
@@ -66,4 +72,17 @@ export async function getResults(jobId: string): Promise<{ results: ScreenResult
     `/jobs/${encodeURIComponent(jobId)}/results`,
   )
   return { results: response.data, meta: response.meta }
+}
+
+export async function createSyncJob(payload: { universe?: 'all' | 'sh' | 'sz'; bars?: number; vipdoc_path?: string } = {}): Promise<{ job_id: string; status: string }> {
+  const response = await requestAt<{ data: { job_id: string; status: string } }>(`${API_ROOT}/market-data/sync`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return response.data
+}
+
+export async function getSyncJob(jobId: string): Promise<MarketSyncJobState> {
+  const response = await requestAt<{ data: MarketSyncJobState }>(`${API_ROOT}/market-data/sync/jobs/${encodeURIComponent(jobId)}`)
+  return response.data
 }

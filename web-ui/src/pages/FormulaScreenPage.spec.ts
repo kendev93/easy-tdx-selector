@@ -8,7 +8,7 @@ import * as api from '../api/formulaScreen'
 
 vi.mock('../api/formulaScreen', async () => {
   const actual = await vi.importActual<typeof import('../api/formulaScreen')>('../api/formulaScreen')
-  return { ...actual, fetchMetadata: vi.fn(), parseFormula: vi.fn(), createJob: vi.fn(), getJob: vi.fn(), getResults: vi.fn() }
+  return { ...actual, fetchMetadata: vi.fn(), parseFormula: vi.fn(), createJob: vi.fn(), getJob: vi.fn(), getResults: vi.fn(), createSyncJob: vi.fn(), getSyncJob: vi.fn() }
 })
 
 const metadata: FormulaScreenMetadata = {
@@ -43,6 +43,11 @@ describe('FormulaScreenPage', () => {
       warnings: [],
     })
     vi.mocked(api.createJob).mockResolvedValue({ job_id: 'job-1', status: 'queued' })
+    vi.mocked(api.createSyncJob).mockResolvedValue({ job_id: 'sync-1', status: 'queued' })
+    vi.mocked(api.getSyncJob).mockResolvedValue({
+      job_id: 'sync-1', status: 'completed', progress: 1, total_candidates: 2, total_scanned: 2,
+      errors: 0, error: null, result: { total_candidates: 2, processed: 2, updated_files: 2, unchanged_files: 0, written_bars: 4, errors: 0, failure_reasons: {} },
+    })
     vi.mocked(api.getJob).mockResolvedValue({
       job_id: 'job-1', status: 'completed', progress: 1, total_candidates: 2, total_scanned: 2,
       total_signals: 2, errors: 0, skipped: 0, error: null,
@@ -142,5 +147,16 @@ describe('FormulaScreenPage', () => {
       formula_parameters: { N: 7 },
       selected_signals: ['custom.breakout'],
     }))
+  })
+
+  it('syncs latest market data with one click and shows the write summary', async () => {
+    const wrapper = mount(FormulaScreenPage)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="sync-market-data"]').trigger('click')
+    await flushPromises()
+
+    expect(api.createSyncJob).toHaveBeenCalledWith({ vipdoc_path: '/data/vipdoc' })
+    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('写入 4 根')
   })
 })

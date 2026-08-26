@@ -14,6 +14,7 @@
 - 沪深全部 A 股、仅上海、仅深圳、自定义股票列表；
 - 排除 ETF、基金、指数、债券和未支持的北京市场文件；
 - 后台任务、进度、失败/跳过摘要、结果 JSON/CSV 导出；
+- 一键同步通达信最新日线到共享 `vipdoc`，已存在日期自动跳过；
 - 公式层安全除零、数据不足跳过、无未来数据；
 - Python 单元/集成测试、Vue 单元测试和 Playwright E2E 流程。
 
@@ -68,13 +69,13 @@ docker compose \
   up --build -d
 ```
 
-这种模式将桌面端目录以只读方式直接挂载到容器，桌面端更新行情后容器立即可见。页面的 vipdoc 输入框填写：
+这种模式将桌面端目录直接挂载到容器，桌面端更新行情后容器立即可见；页面点击“同步最新行情”时，容器也会把新 `.day` 数据写回这个目录。页面的 vipdoc 输入框填写：
 
 ```text
 /data/vipdoc
 ```
 
-无通达信模式使用持久化 named volume；普通 `docker compose down` 或删除容器不会删除数据。共享模式使用宿主机原目录，容器不会拥有或删除宿主机行情文件。不要使用 `docker compose down -v` 或执行 `docker volume rm easy_tdx_selector_vipdoc`，除非确认要删除无通达信模式下的行情数据。查看卷使用 `docker volume inspect easy_tdx_selector_vipdoc`，查看状态使用 `docker compose ps`，停止使用 `docker compose down`。`WEB_PORT` 和 `API_PORT` 仍可通过 `.env` 修改。
+无通达信模式使用持久化 named volume；普通 `docker compose down` 或删除容器不会删除数据。共享模式使用宿主机原目录，容器只通过同步服务写入兼容的 `.day` 文件，不会删除宿主机行情文件。不要使用 `docker compose down -v` 或执行 `docker volume rm easy_tdx_selector_vipdoc`，除非确认要删除无通达信模式下的行情数据。查看卷使用 `docker volume inspect easy_tdx_selector_vipdoc`，查看状态使用 `docker compose ps`，停止使用 `docker compose down`。`WEB_PORT` 和 `API_PORT` 仍可通过 `.env` 修改。
 
 如果只想把已有数据复制进 Docker，而不持续共享桌面端目录，仍可使用：
 
@@ -94,6 +95,8 @@ vipdoc/
 
 扫描读取的是已经写入 `.day` 的最新日线；本应用不会把实时未完成 K 线当成收盘信号。自定义列表每行支持 `SH 600000`、`SZ 000001` 或单独六位代码，空行和 `#` 注释会忽略。
 
+页面的“同步最新行情”按钮会通过 easy-tdx 连接通达信行情服务器，先检查每只股票本地文件的最后日期；没有新完成日线时不会重复下载完整历史，有新数据时才补取并追加到 `.day`。全量同步可能需要较长时间，期间可以查看任务进度。
+
 ## API 快速说明
 
 ```text
@@ -104,6 +107,8 @@ GET  /api/v1/formula-screen/jobs/{job_id}
 GET  /api/v1/formula-screen/jobs/{job_id}/results
 GET  /api/v1/formula-screen/jobs/{job_id}/export.json
 GET  /api/v1/formula-screen/jobs/{job_id}/export.csv
+POST /api/v1/market-data/sync
+GET  /api/v1/market-data/sync/jobs/{job_id}
 ```
 
 提交任务必须至少选择一个信号；`at_least` 必须给出不超过所选信号数的 `minimum_matches`。自定义公式先调用 `/parse`，解析成功后再提交 `/jobs`；显式常量赋值如 `N:=5` 会生成参数控件，`SIGNAL:...` 会生成输出信号。完整 API 结构见 [docs/architecture.md](docs/architecture.md)。

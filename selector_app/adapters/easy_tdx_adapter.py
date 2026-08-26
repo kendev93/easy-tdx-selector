@@ -66,7 +66,7 @@ def _market_to_upstream(market: MarketCode) -> Market:
     return Market.SH if market == "SH" else Market.SZ
 
 
-def _is_supported_a_stock(market: MarketCode, code: str) -> bool:
+def is_supported_a_stock(market: MarketCode, code: str) -> bool:
     """Return whether a code is an SH/SZ A-share stock, not a fund/index/bond."""
 
     if not _CODE_PATTERN.fullmatch(code):
@@ -150,7 +150,7 @@ class EasyTdxAdapter:
             exchange = market.lower()
             for path in sorted((vipdoc / exchange / "lday").glob(f"{exchange}??????.day")):
                 code = path.stem[2:]
-                if _is_supported_a_stock(market, code):
+                if is_supported_a_stock(market, code):
                     refs.append(StockRef(market=market, code=code, path=path))
         return refs
 
@@ -164,7 +164,7 @@ class EasyTdxAdapter:
             if parsed is None:
                 continue
             market, code = parsed
-            if not _is_supported_a_stock(market, code):
+            if not is_supported_a_stock(market, code):
                 continue
             key = (market, code)
             if key in seen:
