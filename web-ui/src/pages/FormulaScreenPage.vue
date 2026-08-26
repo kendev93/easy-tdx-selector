@@ -29,12 +29,19 @@ const results = ref<ScreenResult[]>([])
 const resultMeta = ref<ResultsMeta | null>(null)
 const customParseLoading = ref(false)
 const customParseError = ref('')
+const parsedFormulaText = ref('')
 const showAdvanced = ref(false)
 const syncLoading = ref(false)
 const syncJob = ref<MarketSyncJobState | null>(null)
 
 const progressPercent = computed(() => Math.round((job.value?.progress ?? 0) * 100))
-const canSubmit = computed(() => !loading.value && !syncLoading.value && !customParseLoading.value && metadata.value !== null)
+const canSubmit = computed(() => (
+  !loading.value
+  && !syncLoading.value
+  && !customParseLoading.value
+  && metadata.value !== null
+  && (form.mode !== 'custom' || customMetadata.value !== null)
+))
 
 function setMode(mode: ScreenFormState['mode']): void {
   if (form.mode === mode) return
@@ -68,8 +75,13 @@ async function parseCustomFormula(): Promise<void> {
   try {
     const parsed = await parseFormula(form.formulaText)
     customMetadata.value = parsed
+    parsedFormulaText.value = form.formulaText.trim()
+    const previousParameters = form.formulaParameters
     form.formulaParameters = Object.fromEntries(
-      parsed.parameters.map((parameter) => [parameter.name, parameter.default]),
+      parsed.parameters.map((parameter) => [
+        parameter.name,
+        previousParameters[parameter.name] ?? parameter.default,
+      ]),
     )
     form.selectedSignals = parsed.signals.map((signal) => signal.id)
     form.minimumMatches = Math.min(
@@ -80,6 +92,7 @@ async function parseCustomFormula(): Promise<void> {
     message.value = `公式解析完成：已识别 ${parsed.parameters.length} 个参数、${parsed.signals.length} 个输出信号。`
   } catch (error) {
     customMetadata.value = null
+    parsedFormulaText.value = ''
     form.selectedSignals = []
     customParseError.value = error instanceof FormulaScreenApiError
       ? error.message
@@ -193,6 +206,14 @@ onMounted(async () => {
 })
 
 watch(form, (value) => saveForm(value), { deep: true })
+watch(() => form.formulaText, (value) => {
+  if (form.mode !== 'custom' || customMetadata.value === null) return
+  if (value.trim() === parsedFormulaText.value) return
+  customMetadata.value = null
+  parsedFormulaText.value = ''
+  form.selectedSignals = []
+  customParseError.value = '公式已修改，请重新解析。'
+})
 </script>
 
 <template>

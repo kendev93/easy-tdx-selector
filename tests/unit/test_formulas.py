@@ -138,9 +138,8 @@ def test_indicator_two_keeps_the_explicit_ref_twenty_gap() -> None:
         expected[index] /= 210
 
     assert np.allclose(result.values["x"][20:], expected[20:], equal_nan=True)
-    assert not np.allclose(
-        result.values["x"][30:], result.values["x_with_ref_19"][30:], equal_nan=True
-    )
+    with_ref_19 = result.values["x"] + 19 * REF(a, 19)
+    assert not np.allclose(result.values["x"][30:], with_ref_19[30:], equal_nan=True)
 
 
 def test_indicator_three_uses_fractional_sma_period_3_2() -> None:

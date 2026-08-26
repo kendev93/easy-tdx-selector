@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -25,6 +28,8 @@ MarketCode = Literal["SH", "SZ"]
 
 _CODE_PATTERN = re.compile(r"^\d{6}$")
 _MARKET_PATTERN = re.compile(r"^(SH|SZ)[:\s-]?([0-9]{6})$", re.IGNORECASE)
+_SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+_MARKET_CLOSE = (15, 5)
 
 
 def suggested_vipdoc_path() -> str:
@@ -119,6 +124,9 @@ def _frame_from_bars(bars: list[SecurityBar]) -> pd.DataFrame:
 class EasyTdxAdapter:
     """Read normalized daily bars and stock references through easy_tdx."""
 
+    def __init__(self, clock: Callable[[], datetime] | None = None) -> None:
+        self._clock = clock or (lambda: datetime.now(_SHANGHAI_TZ))
+
     def resolve_vipdoc(self, vipdoc_path: str | Path | None) -> Path:
         normalized = Path(vipdoc_path).expanduser() if vipdoc_path is not None else None
         return Path(resolve_vipdoc(normalized))
@@ -186,4 +194,10 @@ class EasyTdxAdapter:
         frame = _frame_from_bars(bars)
         if frame.empty:
             return frame
-        return frame.sort_values("date", kind="stable").reset_index(drop=True)
+        ordered = frame.sort_values("date", kind="stable").reset_index(drop=True)
+        now = self._clock()
+        if now.tzinfo is not None:
+            now = now.astimezone(_SHANGHAI_TZ)
+        if (now.hour, now.minute) < _MARKET_CLOSE:
+            ordered = ordered[ordered["date"].dt.date != now.date()]
+        return ordered.reset_index(drop=True)

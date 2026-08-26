@@ -9,6 +9,7 @@ new completed data, preventing repeated bulk downloads on every sync.
 from __future__ import annotations
 
 import logging
+import os
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from easy_tdx import KlineCategory, Market, SecurityBar, TdxClient
 from easy_tdx.offline import (
+    encode_daily_bar,
     find_daily_bar_file,
     get_last_bar_date,
     sync_daily_bars_from_security_bars,
@@ -34,6 +36,7 @@ SyncUniverse = Literal["all", "sh", "sz"]
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _MARKET_PRICE_COEFFICIENT = 0.01
 _MARKET_VOLUME_COEFFICIENT = 0.01
+_LATEST_PROBE_BARS = 2
 
 
 @dataclass(frozen=True)
@@ -104,8 +107,13 @@ ProgressCallback = Callable[[int, int], None]
 class EasyTdxMarketSync:
     """Fetch completed daily bars and append them in TDX ``.day`` format."""
 
-    def __init__(self, client_factory: ClientFactory | None = None) -> None:
+    def __init__(
+        self,
+        client_factory: ClientFactory | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self._client_factory = client_factory
+        self._clock = clock or (lambda: datetime.now(_SHANGHAI_TZ))
         self._write_lock = Lock()
 
     def sync(
@@ -198,13 +206,28 @@ class EasyTdxMarketSync:
         if last_date is None:
             frame = client.get_security_bars(market, code, KlineCategory.DAY, 0, config.bars)
         else:
-            latest = client.get_security_bars(market, code, KlineCategory.DAY, 0, 1)
-            latest_bars = _dataframe_to_completed_bars(latest)
+            # Before the close, the newest server row can be today's provisional
+            # bar. Fetch one extra row so yesterday's completed bar is still
+            # discoverable and missing data is not left behind until tomorrow.
+            latest = client.get_security_bars(
+                market,
+                code,
+                KlineCategory.DAY,
+                0,
+                _LATEST_PROBE_BARS,
+            )
+            latest_bars = _dataframe_to_completed_bars(latest, now=self._clock())
             if not latest_bars or _bar_date_int(latest_bars[-1]) <= last_date:
+                if (
+                    latest_bars
+                    and _is_current_day_after_close(latest_bars[-1], now=self._clock())
+                    and _bar_date_int(latest_bars[-1]) == last_date
+                ):
+                    return self._replace_last_bar(filepath, latest_bars[-1])
                 return 0
             frame = client.get_security_bars(market, code, KlineCategory.DAY, 0, config.bars)
 
-        bars = _dataframe_to_completed_bars(frame)
+        bars = _dataframe_to_completed_bars(frame, now=self._clock())
         if not bars:
             return 0
         filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -216,6 +239,30 @@ class EasyTdxMarketSync:
                 vol_coeff=_MARKET_VOLUME_COEFFICIENT,
             )
         return cast(int, written)
+
+    def _replace_last_bar(self, filepath: Path, bar: SecurityBar) -> int:
+        """Replace a same-day provisional bar with the completed close."""
+
+        with self._write_lock:
+            # The public writer repairs a possible partial tail before the raw
+            # fixed-size replacement below; it receives no new bars by design.
+            sync_daily_bars_from_security_bars(
+                filepath,
+                [],
+                price_coeff=_MARKET_PRICE_COEFFICIENT,
+                vol_coeff=_MARKET_VOLUME_COEFFICIENT,
+            )
+            encoded = encode_daily_bar(
+                bar,
+                price_coeff=_MARKET_PRICE_COEFFICIENT,
+                vol_coeff=_MARKET_VOLUME_COEFFICIENT,
+            )
+            with filepath.open("r+b") as handle:
+                handle.seek(-len(encoded), os.SEEK_END)
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+        return 1
 
 
 def _to_market(value: object) -> Market | None:
@@ -231,12 +278,16 @@ def _to_market(value: object) -> Market | None:
         return None
     try:
         market = Market(int(value))
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
     return market if market in {Market.SH, Market.SZ} else None
 
 
-def _dataframe_to_completed_bars(frame: pd.DataFrame) -> list[SecurityBar]:
+def _dataframe_to_completed_bars(
+    frame: pd.DataFrame,
+    *,
+    now: datetime | None = None,
+) -> list[SecurityBar]:
     if frame.empty:
         return []
     volume_column = "vol" if "vol" in frame.columns else "volume"
@@ -247,7 +298,7 @@ def _dataframe_to_completed_bars(frame: pd.DataFrame) -> list[SecurityBar]:
     bars: list[SecurityBar] = []
     for row in frame.to_dict(orient="records"):
         timestamp = _row_timestamp(row)
-        if _is_unfinished_today(timestamp):
+        if _is_unfinished_today(timestamp, now=now):
             continue
         bars.append(
             SecurityBar(
@@ -279,9 +330,14 @@ def _row_timestamp(row: Mapping[str, object]) -> pd.Timestamp:
     raise ValueError("在线 K 线响应缺少日期字段")
 
 
-def _is_unfinished_today(timestamp: pd.Timestamp) -> bool:
-    now = datetime.now(_SHANGHAI_TZ)
-    return timestamp.date() == now.date() and (now.hour, now.minute) < (15, 5)
+def _is_unfinished_today(timestamp: pd.Timestamp, *, now: datetime | None = None) -> bool:
+    current = now or datetime.now(_SHANGHAI_TZ)
+    return timestamp.date() == current.date() and (current.hour, current.minute) < (15, 5)
+
+
+def _is_current_day_after_close(bar: SecurityBar, *, now: datetime) -> bool:
+    timestamp = pd.Timestamp(year=bar.year, month=bar.month, day=bar.day)
+    return timestamp.date() == now.date() and not _is_unfinished_today(timestamp, now=now)
 
 
 def _bar_date_int(bar: SecurityBar) -> int:

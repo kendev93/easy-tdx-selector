@@ -59,8 +59,6 @@ def calculate_indicator_two(frame: pd.DataFrame) -> FormulaResult:
     short_cost = MyTT.EMA(close, 17)
     a = (3 * close + low + open_ + high) / 6
     x = _weighted_x(a)
-    # Regression-only counterfactual used by tests/documentation to protect the gap.
-    x_with_ref_19 = x + 19 * MyTT.REF(a, 19)
     mid_cost = MyTT.EMA(x, 13)
 
     var1 = np.ones(len(close))
@@ -104,7 +102,6 @@ def calculate_indicator_two(frame: pd.DataFrame) -> FormulaResult:
         "short_cost": short_cost,
         "a": a,
         "x": x,
-        "x_with_ref_19": x_with_ref_19,
         "mid_cost": mid_cost,
         "var1": var1,
         "var2": var2,

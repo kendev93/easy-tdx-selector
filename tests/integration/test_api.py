@@ -147,6 +147,15 @@ def test_job_creation_status_and_empty_results() -> None:
     assert result_response.json()["data"] == []
 
 
+def test_unknown_job_uses_the_standard_error_envelope() -> None:
+    with TestClient(create_app(engine=EmptyEngine())) as client:
+        response = client.get("/api/v1/formula-screen/jobs/not-found")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+    assert "detail" not in response.json()
+
+
 def test_market_sync_job_can_be_created_and_polled(tmp_path: Path, monkeypatch) -> None:
     class FakeMarketSync:
         def sync(self, config, progress_callback=None):
@@ -163,7 +172,10 @@ def test_market_sync_job_can_be_created_and_polled(tmp_path: Path, monkeypatch) 
 
     monkeypatch.setenv("SELECTOR_VIPDOC_PATH", str(tmp_path))
     with TestClient(create_app(engine=EmptyEngine(), market_sync=FakeMarketSync())) as client:
-        response = client.post("/api/v1/market-data/sync", json={})
+        response = client.post(
+            "/api/v1/market-data/sync",
+            json={"vipdoc_path": str(tmp_path)},
+        )
         assert response.status_code == 202
         job_id = response.json()["data"]["job_id"]
         for _ in range(50):
@@ -178,6 +190,17 @@ def test_market_sync_job_can_be_created_and_polled(tmp_path: Path, monkeypatch) 
 
     assert state["status"] == "completed"
     assert state["result"]["written_bars"] == 3
+
+
+def test_market_sync_rejects_an_unavailable_data_directory(tmp_path: Path) -> None:
+    with TestClient(create_app(engine=EmptyEngine())) as client:
+        response = client.post(
+            "/api/v1/market-data/sync",
+            json={"vipdoc_path": str(tmp_path / "missing-vipdoc")},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "data_directory_error"
 
 
 def test_unexpected_job_failure_does_not_expose_internal_stack_trace() -> None:

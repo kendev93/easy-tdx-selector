@@ -149,6 +149,36 @@ describe('FormulaScreenPage', () => {
     }))
   })
 
+  it('preserves an edited custom parameter when the formula is parsed again', async () => {
+    const wrapper = mount(FormulaScreenPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="mode-custom"]').trigger('click')
+    await wrapper.get('[data-testid="custom-formula"]').setValue('N:=5; BREAKOUT:CROSS(C,REF(C,N));')
+    await wrapper.get('[data-testid="parse-formula"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="formula-param-N"]').setValue(7)
+    await wrapper.get('[data-testid="parse-formula"]').trigger('click')
+    await flushPromises()
+
+    expect((wrapper.get('[data-testid="formula-param-N"]').element as HTMLInputElement).value).toBe('7')
+  })
+
+  it('requires reparsing after a custom formula is edited', async () => {
+    const wrapper = mount(FormulaScreenPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="mode-custom"]').trigger('click')
+    await wrapper.get('[data-testid="custom-formula"]').setValue('N:=5; BREAKOUT:CROSS(C,REF(C,N));')
+    await wrapper.get('[data-testid="parse-formula"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="custom-formula-meta"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="custom-formula"]').setValue('N:=6; BREAKOUT:CROSS(C,REF(C,N));')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="custom-formula-meta"]').exists()).toBe(false)
+    expect((wrapper.get('[data-testid="start-scan"]').element as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('syncs latest market data with one click and shows the write summary', async () => {
     const wrapper = mount(FormulaScreenPage)
     await flushPromises()

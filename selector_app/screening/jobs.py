@@ -65,13 +65,21 @@ class JobState:
 
 
 class ScreenJobRunner:
-    def __init__(self, engine: ScanEngineLike | None = None, max_workers: int = 1) -> None:
+    def __init__(
+        self,
+        engine: ScanEngineLike | None = None,
+        max_workers: int = 1,
+        max_results: int = 100,
+    ) -> None:
+        if max_results < 1:
+            raise ValueError("任务结果上限必须大于 0")
         self._engine = engine or ScreenEngine()
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="screen-job"
         )
         self._jobs: OrderedDict[str, JobState] = OrderedDict()
         self._lock = Lock()
+        self._max_results = max_results
         self._shutdown = False
 
     def submit(self, config: ScanConfig) -> str:
@@ -81,6 +89,7 @@ class ScreenJobRunner:
                 raise RuntimeError("任务执行器已关闭")
             self._jobs[job_id] = JobState(job_id=job_id)
             self._executor.submit(self._run, job_id, config)
+            self._evict_if_needed_locked()
         return job_id
 
     def get(self, job_id: str) -> JobState | None:
@@ -96,6 +105,7 @@ class ScreenJobRunner:
                 raise RuntimeError("任务执行器已关闭")
             self._jobs[job_id] = JobState(job_id=job_id, description=description)
             self._executor.submit(self._run_callable, job_id, func)
+            self._evict_if_needed_locked()
         return job_id
 
     def _run_callable(self, job_id: str, func: GenericTask) -> None:
@@ -119,12 +129,14 @@ class ScreenJobRunner:
                 state.status = "failed"
                 state.error = "后台任务失败，请检查配置和服务状态后重试"
                 state.finished_at = time.time()
+                self._evict_if_needed_locked()
             return
         with self._lock:
             state.status = "completed"
             state.progress = 1.0
             state.result_payload = result
             state.finished_at = time.time()
+            self._evict_if_needed_locked()
 
     def _run(self, job_id: str, config: ScanConfig) -> None:
         state = self.get(job_id)
@@ -150,6 +162,7 @@ class ScreenJobRunner:
                 state.status = "failed"
                 state.error = "扫描任务失败，请检查数据目录和选股配置后重试"
                 state.finished_at = time.time()
+                self._evict_if_needed_locked()
             return
         with self._lock:
             state.status = "completed"
@@ -161,6 +174,20 @@ class ScreenJobRunner:
             state.skipped = report.skipped
             state.report = report
             state.finished_at = time.time()
+            self._evict_if_needed_locked()
+
+    def _evict_if_needed_locked(self) -> None:
+        """Evict old finished jobs without removing work still in flight."""
+
+        while len(self._jobs) > self._max_results:
+            evict_id: str | None = None
+            for job_id, state in self._jobs.items():
+                if state.status in {"completed", "failed"}:
+                    evict_id = job_id
+                    break
+            if evict_id is None:
+                return
+            self._jobs.pop(evict_id, None)
 
     def shutdown(self, wait: bool = True) -> None:
         with self._lock:

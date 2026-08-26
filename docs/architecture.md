@@ -39,6 +39,7 @@ ScreenEngine ── FormulaRegistry ── 三组纯公式
 - 公式二保留缺失的 `REF(A,19)`，直接使用 `REF(A,20)`；`W3` 的两个相同 IF 分支用动态 REF 等价实现。
 - 公式三保留 `SMA(...,3.2,1)`。
 - 首段 `REF`/滚动 NaN 不会被伪造为信号；最少历史不足的股票记为 `skipped`。
+- 上海时间 15:05 前，适配器会过滤 `.day` 中可能存在的今日临时记录；收盘后才允许它成为最后一根信号 K 线。
 - 计算只消费 DataFrame 中最后一根已完成日线，不使用未来行，也不在共享 frame 上原地修改。
 
 ## 扫描和任务
@@ -46,6 +47,8 @@ ScreenEngine ── FormulaRegistry ── 三组纯公式
 `ScanConfig` 通过 registry 验证 signal id，再由 `ScreenEngine` 按公式去重计算。`all`、`any` 和 `at_least` 只针对用户已选择的信号做合并。默认 worker 为 1；默认适配器在 `workers > 1` 时使用 `ProcessPoolExecutor`，注入测试适配器则退化为线程池以保持可测试性。每只股票异常只增加失败计数并继续扫描。
 
 `ScreenJobRunner` 是本项目自己的任务生命周期组件：状态保留在内存，重启后任务丢失，结果查询接口返回 409/404/500 等语义状态。它没有引入 Redis/Celery；部署为单机本地工具时足够。未来如果需要跨进程持久化，应替换 runner，而不是把任务状态塞进路由。
+
+同步与选股任务在应用内共用单线程队列，避免本项目自己的读写重叠；通达信桌面端不共享这个 Python 锁，因此共享 bind 模式下仍应避开桌面端正在更新同一 `.day` 文件的时段。
 
 ## API
 

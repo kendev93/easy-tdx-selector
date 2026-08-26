@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
-from easy_tdx import KlineCategory, Market
-from easy_tdx.offline import read_daily_bars
+from easy_tdx import KlineCategory, Market, SecurityBar
+from easy_tdx.offline import append_daily_bars, read_daily_bars
 
 from selector_app.adapters.market_sync import EasyTdxMarketSync, MarketSyncConfig
 
@@ -24,8 +26,9 @@ def bars_frame() -> pd.DataFrame:
 
 
 class FakeClient:
-    def __init__(self, *, fail_code: str | None = None) -> None:
+    def __init__(self, *, fail_code: str | None = None, frame: pd.DataFrame | None = None) -> None:
         self.fail_code = fail_code
+        self.frame = frame
         self.requests: list[tuple[str, int]] = []
 
     def __enter__(self) -> FakeClient:
@@ -51,7 +54,8 @@ class FakeClient:
         self.requests.append((code, count))
         if code == self.fail_code:
             raise RuntimeError("upstream unavailable")
-        return bars_frame().tail(1) if count == 1 else bars_frame()
+        source = self.frame if self.frame is not None else bars_frame()
+        return source.tail(min(count, len(source)))
 
 
 def test_sync_writes_tdx_day_files_and_skips_non_stock_codes(tmp_path: Path) -> None:
@@ -91,6 +95,96 @@ def test_sync_does_not_duplicate_existing_day_records(tmp_path: Path) -> None:
     assert second.written_bars == 0
     assert client.requests.count(("600000", 800)) == 1
     assert client.requests.count(("000001", 800)) == 1
-    assert client.requests.count(("600000", 1)) == 1
-    assert client.requests.count(("000001", 1)) == 1
+    assert client.requests.count(("600000", 2)) == 1
+    assert client.requests.count(("000001", 2)) == 1
     assert len(read_daily_bars(tmp_path / "sh/lday/sh600000.day")) == 3
+
+
+def test_sync_finds_the_last_completed_bar_before_close(tmp_path: Path) -> None:
+    timezone = ZoneInfo("Asia/Shanghai")
+    morning = datetime(2026, 8, 26, 10, 0, tzinfo=timezone)
+    server_frame = bars_frame().copy()
+    server_frame.loc[server_frame.index[-1], "date"] = pd.Timestamp("2026-08-26")
+
+    class SingleStockClient(FakeClient):
+        def get_security_list_all(self, pages: str = "all") -> pd.DataFrame:
+            return pd.DataFrame([{"market": Market.SH, "code": "600000"}])
+
+    client = SingleStockClient(frame=server_frame)
+    filepath = tmp_path / "sh/lday/sh600000.day"
+    filepath.parent.mkdir(parents=True)
+    append_daily_bars(
+        filepath,
+        [
+            SecurityBar(
+                open=10.0,
+                close=10.2,
+                high=10.4,
+                low=9.8,
+                vol=100_000,
+                amount=1_000_000,
+                year=2026,
+                month=8,
+                day=20,
+                hour=0,
+                minute=0,
+            )
+        ],
+        price_coeff=0.01,
+        vol_coeff=0.01,
+    )
+
+    report = EasyTdxMarketSync(
+        client_factory=lambda _timeout: client,
+        clock=lambda: morning,
+    ).sync(MarketSyncConfig(vipdoc_path=tmp_path))
+
+    assert report.written_bars == 1
+    assert client.requests == [("600000", 2), ("600000", 800)]
+    assert [bar.day for bar in read_daily_bars(filepath)] == [20, 21]
+
+
+def test_sync_replaces_partial_current_day_record_after_market_close(tmp_path: Path) -> None:
+    timezone = ZoneInfo("Asia/Shanghai")
+    close_time = datetime(2026, 8, 26, 16, 0, tzinfo=timezone)
+    current_day = pd.Timestamp("2026-08-26")
+    server_frame = bars_frame().copy()
+    server_frame.loc[server_frame.index[-1], "date"] = current_day
+
+    class SingleStockClient(FakeClient):
+        def get_security_list_all(self, pages: str = "all") -> pd.DataFrame:
+            return pd.DataFrame([{"market": Market.SH, "code": "600000"}])
+
+    client = SingleStockClient(frame=server_frame)
+    filepath = tmp_path / "sh/lday/sh600000.day"
+    filepath.parent.mkdir(parents=True)
+    append_daily_bars(
+        filepath,
+        [
+            SecurityBar(
+                open=9.0,
+                close=9.5,
+                high=10.0,
+                low=8.5,
+                vol=100_000,
+                amount=950_000,
+                year=2026,
+                month=8,
+                day=26,
+                hour=0,
+                minute=0,
+            )
+        ],
+        price_coeff=0.01,
+        vol_coeff=0.01,
+    )
+    service = EasyTdxMarketSync(
+        client_factory=lambda _timeout: client,
+        clock=lambda: close_time,
+    )
+
+    report = service.sync(MarketSyncConfig(vipdoc_path=tmp_path))
+
+    assert report.updated_files == 1
+    assert report.written_bars == 1
+    assert read_daily_bars(filepath)[-1].close == 10.5

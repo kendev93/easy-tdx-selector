@@ -13,8 +13,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install -r requirements.lock
+      - run: python -m pip install "mypy>=1.9,<2" "pytest>=8,<10" "pytest-cov>=5,<8" "ruff>=0.4,<1"
+      - run: python -m pip install -e . --no-deps
       - run: pytest --cov=selector_app --cov-report=term-missing
+      - run: ruff format --check selector_app tests
       - run: ruff check selector_app tests
       - run: mypy selector_app
 
@@ -35,3 +38,20 @@ jobs:
       - run: npm run test:coverage
       - run: npm run typecheck
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - name: Validate desktop vipdoc override
+        run: |
+          mkdir -p "$RUNNER_TEMP/vipdoc"
+          HOST_VIPDOC_PATH="$RUNNER_TEMP/vipdoc" docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.local-vipdoc.yml \
+            config --quiet
+      - run: docker build --file Dockerfile --tag easy-tdx-selector-backend:ci .
+      - run: docker build --file Dockerfile.frontend --tag easy-tdx-selector-frontend:ci .

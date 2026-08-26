@@ -6,7 +6,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -59,6 +59,25 @@ def create_app(
                 "error": {
                     "code": "validation_error",
                     "message": "；".join(messages),
+                }
+            },
+        )
+
+    @app.exception_handler(HTTPException)
+    async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
+        code_by_status = {
+            404: "not_found",
+            409: "conflict",
+            422: "validation_error",
+            503: "service_unavailable",
+        }
+        message = exc.detail if isinstance(exc.detail, str) else "请求失败"
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": code_by_status.get(exc.status_code, "request_error"),
+                    "message": message,
                 }
             },
         )

@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 from easy_tdx import MyTT
 
-from .common import REQUIRED_BAR_COLUMNS, safe_divide
+from .common import REQUIRED_BAR_COLUMNS, dynamic_ref, safe_divide
 from .types import FormulaResult
 
 MAX_FORMULA_LENGTH = 20_000
@@ -161,7 +161,11 @@ def parse_formula(source: str) -> ParsedFormula:
             continue
 
         signal_id = None
-        if assignment == ":" or target is None:
+        if (
+            assignment == ":"
+            or target is None
+            or (assignment == ":=" and target is not None and _looks_like_signal(tree))
+        ):
             signal_name = target or "custom_signal"
             signal_id = _signal_id(signal_name)
             if signal_id in seen_signal_ids:
@@ -310,6 +314,7 @@ def _parse_expression(expression: str) -> ast.Expression:
     translated = re.sub(r"\bOR\b", " or ", translated, flags=re.IGNORECASE)
     translated = re.sub(r"\bNOT\b", " not ", translated, flags=re.IGNORECASE)
     translated = re.sub(r"(?<![<>=!])=(?!=)", "==", translated)
+    translated = " ".join(translated.split())
     try:
         tree = ast.parse(translated, mode="eval")
     except SyntaxError as exc:
@@ -388,6 +393,21 @@ def _validate_node(node: ast.AST) -> None:
 def _signal_id(name: str) -> str:
     suffix = name.lower() if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) else name
     return f"custom.{suffix}"
+
+
+def _looks_like_signal(tree: ast.Expression) -> bool:
+    """Treat boolean assignments (common in TDX formulas) as outputs too."""
+
+    expression = tree.body
+    if isinstance(expression, (ast.Compare, ast.BoolOp)):
+        return True
+    if isinstance(expression, ast.UnaryOp) and isinstance(expression.op, ast.Not):
+        return True
+    return (
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Name)
+        and expression.func.id.upper() == "CROSS"
+    )
 
 
 def _parameter_values(
@@ -565,10 +585,19 @@ def _call(name: str, arguments: list[object]) -> object:
             np.asarray(arguments[2]),
         )
     if name == "REF":
-        period = _scalar(arguments[1])
-        if period < 0 or not period.is_integer():
-            raise ValueError("REF 的周期必须是非负整数")
-        return MyTT.REF(arguments[0], int(period))
+        source = np.asarray(arguments[0], dtype=float)
+        period_value = np.asarray(arguments[1])
+        if period_value.ndim == 0:
+            period = float(period_value)
+            if period < 0 or not period.is_integer():
+                raise ValueError("REF 的周期必须是非负整数")
+            return MyTT.REF(source, int(period))
+        periods = np.asarray(period_value, dtype=float)
+        if len(periods) != len(source):
+            raise ValueError("REF 的动态周期长度必须与行情数据一致")
+        if np.isfinite(periods).any() and (periods[np.isfinite(periods)] < 0).any():
+            raise ValueError("REF 的动态周期必须是非负数")
+        return dynamic_ref(source, periods)
     if name == "SMA":
         return MyTT.SMA(
             arguments[0], _scalar(arguments[1]), _scalar(arguments[2]) if len(arguments) > 2 else 1

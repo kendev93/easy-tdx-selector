@@ -20,7 +20,7 @@ class FormulaScreenRequest(BaseModel):
     combine_mode: Literal["all", "any", "at_least"] = "at_least"
     minimum_matches: int | None = Field(default=None, ge=1, le=32)
     universe: Literal["all", "sh", "sz", "custom"] = "all"
-    universe_file: str | None = None
+    universe_file: str | None = Field(default=None, max_length=1024)
     vipdoc_path: str = Field(min_length=1, max_length=1024)
     workers: int = Field(default=1, ge=1, le=32)
     period: Literal["daily"] = "daily"
@@ -110,4 +110,4 @@ class MarketSyncRequest(BaseModel):
 
     universe: Literal["all", "sh", "sz"] = "all"
     bars: int = Field(default=800, ge=1, le=800)
-    vipdoc_path: str | None = Field(default=None, max_length=1024)
+    vipdoc_path: str | None = Field(default=None, min_length=1, max_length=1024)
