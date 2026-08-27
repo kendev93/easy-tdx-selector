@@ -21,6 +21,7 @@
 from easy_tdx import KlineCategory, Market, TdxClient
 from easy_tdx.offline import find_daily_bar_file, read_daily_bars, resolve_vipdoc
 from easy_tdx import MyTT
+from easy_tdx.backtest import BacktestEngine, BacktestResult, Strategy
 ```
 
 同步行情客户端公开提供 `TdxClient.connect()`、`close()`、`get_security_count()`、`get_security_list()`、`get_security_list_all()` 和 `get_security_bars()`；异步版本对应 `AsyncTdxClient`。本项目的行情同步服务使用同步客户端获取日线，公式扫描仍然读取已经落地的本地文件。
@@ -66,11 +67,11 @@ vipdoc/{sh,sz}/lday/{exchange}{code}.day
 
 `from easy_tdx.screen import SignalScanner` 确实可直接调用，但它的契约是：接收 `Strategy` 子类，在本地 `.day` 文件上提取策略买入信号，并输出简化的 `ScanResult(code, market, signal_date, last_close)`。它不支持本需求的公式一/二/三信号注册、AND/OR/至少 N 个条件合并、指标值回传，因此本项目没有强行复用它。
 
-上游已有 FastAPI 路由、`easy-tdx` CLI 和一个用于回测的进程内任务执行器。它们分别属于上游应用层；本项目的公式任务需要另一套结果字段和本地公式 registry，所以只在本项目内部提供轻量任务执行器，并不让业务代码依赖上游 `easy_tdx.web.*` 内部模块。本项目的 `EasyTdxMarketSync` 已使用上游在线 `get_security_list_all()`/`get_security_bars()` 加上 `.day` 写入 API；公式选股仍只消费本地已经完成的日线。
+上游已有 FastAPI 路由、`easy-tdx` CLI 和一个用于回测的进程内任务执行器。它们分别属于上游应用层；本项目的公式任务需要另一套结果字段和本地公式 registry，所以只在本项目内部提供轻量任务执行器，并不让业务代码依赖上游 `easy_tdx.web.*` 内部模块。本项目的 `EasyTdxMarketSync` 已使用上游在线 `get_security_list_all()`/`get_security_bars()` 加上 `.day` 写入 API；公式选股仍只消费本地已经完成的日线。公式回测使用公开的 `BacktestEngine`、`Strategy` 和 `BacktestResult`，将本项目公式输出转换为逐日买卖信号，不调用上游私有回测接口。
 
-## 6. 本项目适配器和内部实现边界
+## 6. 本项目上游适配器和内部实现边界
 
-唯一上游集成边界是 `selector_app/adapters/easy_tdx_adapter.py`，目前调用：
+行情数据上游集成边界是 `selector_app/adapters/easy_tdx_adapter.py`，目前调用：
 
 - `easy_tdx.Market`；
 - `easy_tdx.offline.resolve_vipdoc`；
@@ -80,6 +81,9 @@ vipdoc/{sh,sz}/lday/{exchange}{code}.day
 - `easy_tdx.offline.sync_daily_bars_from_security_bars`；
 - `easy_tdx.TdxClient`、`Market`、`KlineCategory`、`SecurityBar`；
 - `easy_tdx.MyTT`（由公式层调用，但仍是上游公开模块）。
+- `easy_tdx.backtest.BacktestEngine`、`Strategy`、`BacktestResult`（由公式回测服务调用的公开交易/绩效 API）。
+
+公式回测的交易执行边界位于 `selector_app/backtest/service.py`，只接收项目自己的规范化 DataFrame 和公式信号，并将上游回测结果转换成项目 API 的 JSON 记录。
 
 没有使用上游的 `_detect_security_type`、协议 command、transport、`easy_tdx.web` 路由或 `easy_tdx.screen.scanner` 私有实现。上游的 `SecurityBar` 只在适配器中被转换和写入，不会进入公式或 Web 路由。
 

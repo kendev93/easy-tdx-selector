@@ -4,6 +4,8 @@ import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from easy_tdx import SecurityBar
+from easy_tdx.offline import append_daily_bars
 
 from selector_app.screening.models import ScanReport
 from selector_app.web.app import create_app
@@ -23,9 +25,13 @@ class EmptyEngine:
         )
 
 
-def wait_for_done(client: TestClient, job_id: str) -> dict:
+def wait_for_done(
+    client: TestClient,
+    job_id: str,
+    base_path: str = "/api/v1/formula-screen/jobs",
+) -> dict:
     for _ in range(50):
-        response = client.get(f"/api/v1/formula-screen/jobs/{job_id}")
+        response = client.get(f"{base_path}/{job_id}")
         assert response.status_code == 200
         payload = response.json()["data"]
         if payload["status"] in {"completed", "failed"}:
@@ -201,6 +207,170 @@ def test_market_sync_rejects_an_unavailable_data_directory(tmp_path: Path) -> No
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "data_directory_error"
+
+
+def test_backtest_job_can_be_created_and_results_are_available(tmp_path: Path) -> None:
+    class FakeBacktestService:
+        def run(self, config, progress_callback=None):
+            if progress_callback:
+                progress_callback(1, 1)
+            return {
+                "market": "SH",
+                "code": "600000",
+                "bars": 5,
+                "start_date": "2024-01-02",
+                "end_date": "2024-01-06",
+                "buy_signal": config.buy_signal,
+                "sell_signal": config.sell_signal,
+                "performance": {"total_return": 0.04, "end_value": 10400.0},
+                "equity_curve": [],
+                "trades": [],
+                "positions": [],
+                "diagnostic": None,
+            }
+
+    with TestClient(
+        create_app(engine=EmptyEngine(), backtest_service=FakeBacktestService())
+    ) as client:
+        response = client.post(
+            "/api/v1/backtests",
+            json={
+                "market": "SH",
+                "code": "600000",
+                "vipdoc_path": str(tmp_path),
+                "buy_signal": "custom.buy",
+                "sell_signal": "custom.sell",
+                "formula_text": "BUY:C>10; SELL:C<10;",
+                "start_date": "2024-01-02",
+                "end_date": "2024-01-06",
+            },
+        )
+        assert response.status_code == 202
+        job_id = response.json()["data"]["job_id"]
+        state = None
+        for _ in range(50):
+            status_response = client.get(f"/api/v1/backtests/{job_id}")
+            assert status_response.status_code == 200
+            state = status_response.json()["data"]
+            if state["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("backtest job did not finish")
+        results_response = client.get(f"/api/v1/backtests/{job_id}/results")
+
+    assert state is not None
+    assert state["status"] == "completed"
+    assert state["result"] is None
+    assert results_response.status_code == 200
+    assert results_response.json()["data"]["code"] == "600000"
+
+
+def test_backtest_default_service_reads_day_file_and_serializes_result(tmp_path: Path) -> None:
+    vipdoc = tmp_path / "vipdoc"
+    filepath = vipdoc / "sh/lday/sh600000.day"
+    filepath.parent.mkdir(parents=True)
+    append_daily_bars(
+        filepath,
+        [
+            SecurityBar(
+                open=float(close),
+                close=float(close),
+                high=float(close) + 0.5,
+                low=float(close) - 0.5,
+                vol=100_000,
+                amount=float(close) * 100_000,
+                year=2024,
+                month=1,
+                day=index,
+                hour=0,
+                minute=0,
+            )
+            for index, close in enumerate((10, 11, 12, 13, 14, 13, 12, 14, 15, 14), start=1)
+        ],
+        price_coeff=0.01,
+        vol_coeff=0.01,
+    )
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/v1/backtests",
+            json={
+                "market": "SH",
+                "code": "600000",
+                "vipdoc_path": str(vipdoc),
+                "buy_signal": "custom.buy",
+                "sell_signal": "custom.sell",
+                "formula_text": "BUY:C=11; SELL:C=14;",
+                "start_date": "2024-01-02",
+                "end_date": "2024-01-06",
+                "initial_cash": 10_000,
+                "commission": 0,
+                "min_commission": 0,
+                "stamp_tax": 0,
+            },
+        )
+        assert response.status_code == 202
+        job_id = response.json()["data"]["job_id"]
+        state = wait_for_done(client, job_id, "/api/v1/backtests")
+        results_response = client.get(f"/api/v1/backtests/{job_id}/results")
+
+    assert state["status"] == "completed"
+    payload = results_response.json()["data"]
+    assert payload["code"] == "600000"
+    assert payload["trades"][0]["date"] == "2024-01-03"
+    assert payload["equity_curve"][-1]["date"] == "2024-01-06"
+
+
+def test_backtest_rejects_same_buy_and_sell_signal(tmp_path: Path) -> None:
+    with TestClient(create_app(engine=EmptyEngine())) as client:
+        response = client.post(
+            "/api/v1/backtests",
+            json={
+                "market": "SH",
+                "code": "600000",
+                "vipdoc_path": str(tmp_path),
+                "buy_signal": "indicator_three.begin_zone",
+                "sell_signal": "indicator_three.begin_zone",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_backtest_task_returns_a_safe_domain_error(tmp_path: Path) -> None:
+    class FailingBacktestService:
+        def run(self, config, progress_callback=None):
+            raise ValueError("指定日期范围内没有可用日线数据")
+
+    with TestClient(
+        create_app(engine=EmptyEngine(), backtest_service=FailingBacktestService())
+    ) as client:
+        response = client.post(
+            "/api/v1/backtests",
+            json={
+                "market": "SH",
+                "code": "600000",
+                "vipdoc_path": str(tmp_path),
+                "buy_signal": "indicator_three.begin_zone",
+                "sell_signal": "indicator_three.end_zone",
+            },
+        )
+        assert response.status_code == 202
+        job_id = response.json()["data"]["job_id"]
+        state = None
+        for _ in range(50):
+            state_response = client.get(f"/api/v1/backtests/{job_id}")
+            state = state_response.json()["data"]
+            if state["status"] == "failed":
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("backtest job did not fail")
+
+    assert state is not None
+    assert state["error"] == "指定日期范围内没有可用日线数据"
 
 
 def test_unexpected_job_failure_does_not_expose_internal_stack_trace() -> None:

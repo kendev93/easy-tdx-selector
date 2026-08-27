@@ -131,6 +131,19 @@ class EasyTdxAdapter:
         normalized = Path(vipdoc_path).expanduser() if vipdoc_path is not None else None
         return Path(resolve_vipdoc(normalized))
 
+    def stock_ref(self, vipdoc_path: str | Path, market: MarketCode, code: str) -> StockRef:
+        """Build a validated reference for one SH/SZ A-share stock."""
+
+        normalized_code = code.strip()
+        if not is_supported_a_stock(market, normalized_code):
+            raise ValueError(f"不支持回测的股票代码: {market} {code}")
+        vipdoc = self.resolve_vipdoc(vipdoc_path)
+        return StockRef(
+            market=market,
+            code=normalized_code,
+            path=find_daily_bar_file(_market_to_upstream(market), normalized_code, vipdoc),
+        )
+
     def list_stock_refs(
         self,
         vipdoc_path: str | Path,

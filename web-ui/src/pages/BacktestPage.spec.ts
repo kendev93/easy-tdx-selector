@@ -1,0 +1,165 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { FormulaScreenMetadata } from '../types'
+import BacktestPage from './BacktestPage.vue'
+
+import * as backtestApi from '../api/backtest'
+import * as formulaApi from '../api/formulaScreen'
+
+vi.mock('../api/formulaScreen', async () => {
+  const actual = await vi.importActual<typeof import('../api/formulaScreen')>('../api/formulaScreen')
+  return { ...actual, fetchMetadata: vi.fn(), parseFormula: vi.fn() }
+})
+
+vi.mock('../api/backtest', async () => {
+  const actual = await vi.importActual<typeof import('../api/backtest')>('../api/backtest')
+  return { ...actual, createBacktest: vi.fn(), getBacktest: vi.fn(), getBacktestResults: vi.fn() }
+})
+
+const metadata: FormulaScreenMetadata = {
+  indicators: [{
+    id: 'indicator_three', display_name: '指标三 · 拉升准备', minimum_bars: 34, recommended_bars: 120,
+    signals: [
+      { id: 'indicator_three.prepare_rally', display_name: '准备拉升', description: 'VAR1 上穿 8' },
+      { id: 'indicator_three.end_zone', display_name: '终', description: 'VAR1 > 90' },
+    ],
+  }],
+  combine_modes: [],
+  supported_markets: ['SH', 'SZ'],
+  supported_universe: [],
+  periods: [{ value: 'daily', label: '日线' }],
+  data_directory_help: '本地目录',
+  default_vipdoc_path: '/data/vipdoc',
+}
+
+describe('BacktestPage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    vi.mocked(formulaApi.fetchMetadata).mockResolvedValue(metadata)
+    vi.mocked(backtestApi.createBacktest).mockResolvedValue({ job_id: 'bt-1', status: 'queued' })
+    vi.mocked(backtestApi.getBacktest).mockResolvedValue({
+      job_id: 'bt-1', status: 'completed', progress: 1, total_candidates: 1, total_scanned: 1,
+      errors: 0, error: null, result: null,
+    })
+    vi.mocked(backtestApi.getBacktestResults).mockResolvedValue({
+      market: 'SH', code: '600000', bars: 5, start_date: '2024-01-02', end_date: '2024-01-06',
+      buy_signal: 'indicator_three.prepare_rally', sell_signal: 'indicator_three.end_zone',
+      performance: { total_return: 0.04, annual_return: 0.1, max_drawdown: 0.02, sharpe: 1.2, total_trades: 2, win_rate: 1, end_value: 10400, start_cash: 10000 },
+      equity_curve: [
+        { date: '2024-01-02', total: 10000, cash: 10000, position_value: 0, drawdown: 0, drawdown_pct: 0 },
+        { date: '2024-01-06', total: 10400, cash: 10400, position_value: 0, drawdown: 0, drawdown_pct: 0 },
+      ],
+      trades: [{ date: '2024-01-03', direction: 'BUY', size: 800, price: 12, commission: 0, slippage: 0, pnl: 0, rejected: false }],
+      positions: [], diagnostic: null,
+    })
+  })
+
+  it('submits a single-stock backtest and renders performance and trades', async () => {
+    const wrapper = mount(BacktestPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="backtest-code"]').setValue('600000')
+    await wrapper.get('[data-testid="backtest-vipdoc-path"]').setValue('/data/vipdoc')
+    await wrapper.get('[data-testid="backtest-market"]').setValue('SZ')
+    await wrapper.get('[data-testid="backtest-market"]').setValue('SH')
+    await wrapper.get('[data-testid="backtest-buy-signal"]').setValue('indicator_three.end_zone')
+    await wrapper.get('[data-testid="backtest-buy-signal"]').setValue('indicator_three.prepare_rally')
+    await wrapper.get('[data-testid="backtest-sell-signal"]').setValue('indicator_three.prepare_rally')
+    await wrapper.get('[data-testid="backtest-sell-signal"]').setValue('indicator_three.end_zone')
+    await wrapper.get('[data-testid="backtest-start"]').setValue('2024-01-02')
+    await wrapper.get('[data-testid="backtest-end"]').setValue('2024-01-06')
+    await wrapper.get('[data-testid="backtest-config"]').trigger('submit')
+    await flushPromises()
+
+    expect(backtestApi.createBacktest).toHaveBeenCalledWith(expect.objectContaining({
+      market: 'SH', code: '600000', vipdoc_path: '/data/vipdoc',
+      buy_signal: 'indicator_three.prepare_rally', sell_signal: 'indicator_three.end_zone',
+      start_date: '2024-01-02', end_date: '2024-01-06',
+    }))
+    expect(wrapper.get('[data-testid="backtest-results"]').text()).toContain('4.00%')
+    expect(wrapper.get('[data-testid="backtest-trades"]').text()).toContain('2024-01-03')
+    expect(wrapper.get('[data-testid="equity-chart"]')).toBeTruthy()
+  })
+
+  it('parses custom buy and sell outputs and invalidates them after editing', async () => {
+    vi.mocked(formulaApi.parseFormula).mockResolvedValueOnce({
+      parameters: [{ name: 'N', default: 5, minimum: 1, maximum: 10000, step: 1 }],
+      signals: [
+        { id: 'custom.buy', display_name: '买入', description: '买入条件' },
+        { id: 'custom.sell', display_name: '卖出', description: '卖出条件' },
+      ],
+      minimum_bars: 6,
+      warnings: [],
+    })
+    const wrapper = mount(BacktestPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="backtest-mode-custom"]').trigger('click')
+    await wrapper.get('[data-testid="backtest-formula"]').setValue('N:=5; 买入:C>10; 卖出:C<10;')
+    await wrapper.get('[data-testid="backtest-parse-formula"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('#backtest-param-N').setValue(0)
+    await wrapper.get('[data-testid="backtest-code"]').setValue('600000')
+    await wrapper.get('[data-testid="backtest-vipdoc-path"]').setValue('/data/vipdoc')
+    await wrapper.get('[data-testid="backtest-config"]').trigger('submit')
+    expect(wrapper.text()).toContain('参数 N 必须在 1 到 10000 之间')
+    await wrapper.get('#backtest-param-N').setValue(8)
+    expect((wrapper.get('[data-testid="backtest-buy-signal"]').element as HTMLSelectElement).value).toBe('custom.buy')
+    expect((wrapper.get('[data-testid="backtest-sell-signal"]').element as HTMLSelectElement).value).toBe('custom.sell')
+    await wrapper.get('[data-testid="backtest-formula"]').setValue('N:=8; 买入:C>10; 卖出:C<10;')
+    await flushPromises()
+    expect(wrapper.text()).toContain('公式已修改，请重新解析')
+
+    await wrapper.get('[data-testid="backtest-mode-preset"]').trigger('click')
+    expect((wrapper.get('[data-testid="backtest-buy-signal"]').element as HTMLSelectElement).value).toBe('indicator_three.prepare_rally')
+  })
+
+  it('validates required fields and shows a failed request message', async () => {
+    const wrapper = mount(BacktestPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="backtest-config"]').trigger('submit')
+    expect(wrapper.text()).toContain('请输入六位股票代码')
+
+    vi.mocked(backtestApi.createBacktest).mockRejectedValueOnce(new Error('network down'))
+    await wrapper.get('[data-testid="backtest-code"]').setValue('600000')
+    await wrapper.get('[data-testid="backtest-vipdoc-path"]').setValue('/data/vipdoc')
+    await wrapper.get('[data-testid="backtest-config"]').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="backtest-message"]').text()).toContain('回测失败')
+  })
+
+  it('supports fixed-size orders and exports a sparse result safely', async () => {
+    vi.mocked(backtestApi.getBacktestResults).mockResolvedValueOnce({
+      market: 'SH', code: '600000', bars: 1, start_date: '2024-01-02', end_date: '2024-01-02',
+      buy_signal: 'indicator_three.prepare_rally', sell_signal: 'indicator_three.end_zone',
+      performance: { total_return: null, annual_return: null, max_drawdown: null, sharpe: null, total_trades: null, win_rate: null },
+      equity_curve: [{ date: '2024-01-02', total: null, cash: null, position_value: null, drawdown: null, drawdown_pct: null }],
+      trades: [], positions: [], configuration: { initial_cash: 10000, execution: 'next_open', position_mode: 'fixed', fixed_size: 200 }, diagnostic: '数据不足',
+    })
+    const wrapper = mount(BacktestPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="backtest-code"]').setValue('600000')
+    await wrapper.get('[data-testid="backtest-vipdoc-path"]').setValue('/data/vipdoc')
+    await wrapper.get('[data-testid="backtest-advanced-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="initial-cash"]').setValue(50000)
+    await wrapper.get('[data-testid="execution"]').setValue('next_close')
+    await wrapper.get('[data-testid="position-mode"]').setValue('fixed')
+    await wrapper.get('[data-testid="fixed-size"]').setValue(200)
+    await wrapper.get('[data-testid="commission"]').setValue(0.001)
+    await wrapper.get('[data-testid="min-commission"]').setValue(3)
+    await wrapper.get('[data-testid="stamp-tax"]').setValue(0.002)
+    await wrapper.get('[data-testid="slippage"]').setValue(0.01)
+    await wrapper.get('[data-testid="backtest-config"]').trigger('submit')
+    await flushPromises()
+
+    expect(backtestApi.createBacktest).toHaveBeenCalledWith(expect.objectContaining({ position_mode: 'fixed', fixed_size: 200 }))
+    expect(wrapper.get('[data-testid="backtest-diagnostic"]').text()).toContain('数据不足')
+    Object.defineProperty(URL, 'createObjectURL', { value: vi.fn().mockReturnValue('blob:backtest'), configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    await wrapper.get('[data-testid="export-backtest"]').trigger('click')
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+    clickSpy.mockRestore()
+  })
+})

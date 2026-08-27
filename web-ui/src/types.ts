@@ -1,6 +1,8 @@
 export type CombineMode = 'all' | 'any' | 'at_least'
 export type Universe = 'all' | 'sh' | 'sz' | 'custom'
 export type FormulaMode = 'preset' | 'custom'
+export type BacktestExecution = 'next_open' | 'next_close'
+export type BacktestPositionMode = 'full' | 'fixed'
 
 export interface SignalDefinition {
   id: string
@@ -125,4 +127,80 @@ export interface ResultsMeta {
   skipped: number
   failure_reasons: Record<string, number>
   skip_reasons: Record<string, number>
+}
+
+export interface BacktestPayload {
+  market: 'SH' | 'SZ'
+  code: string
+  vipdoc_path: string
+  buy_signal: string
+  sell_signal: string
+  formula_text?: string | null
+  formula_parameters?: Record<string, number>
+  start_date?: string | null
+  end_date?: string | null
+  initial_cash?: number
+  commission?: number
+  min_commission?: number
+  stamp_tax?: number
+  slippage?: number
+  execution?: BacktestExecution
+  position_mode?: BacktestPositionMode
+  fixed_size?: number | null
+}
+
+export interface BacktestEquityPoint {
+  date: string
+  cash: number | null
+  position_value: number | null
+  total: number | null
+  drawdown: number | null
+  drawdown_pct: number | null
+}
+
+export interface BacktestTrade {
+  date: string
+  direction: 'BUY' | 'SELL'
+  size: number
+  price: number
+  commission: number
+  slippage: number
+  pnl: number
+  cost_basis?: number
+  rejected: boolean
+}
+
+export interface BacktestPosition {
+  date: string
+  size: number
+  avg_price: number
+  market_value: number
+  unrealized_pnl: number
+}
+
+export interface BacktestResult {
+  market: 'SH' | 'SZ'
+  code: string
+  bars: number
+  start_date: string
+  end_date: string
+  buy_signal: string
+  sell_signal: string
+  performance: Record<string, number | null>
+  equity_curve: BacktestEquityPoint[]
+  trades: BacktestTrade[]
+  positions: BacktestPosition[]
+  configuration: Record<string, number | string | null>
+  diagnostic: string | null
+}
+
+export interface BacktestJobState {
+  job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  progress: number
+  total_candidates: number
+  total_scanned: number
+  errors: number
+  error: string | null
+  result: BacktestResult | null
 }

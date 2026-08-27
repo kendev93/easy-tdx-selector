@@ -17,12 +17,13 @@ ScreenJobRunner（进程内任务生命周期）
 ScreenEngine ── FormulaRegistry ── 三组纯公式
         │
         ├── EasyTdxAdapter ── easy_tdx 公共离线 API ── vipdoc/{sh,sz}/lday/*.day
-        └── EasyTdxMarketSync ── easy_tdx 在线 API + .day 写入 API ──┘
+        ├── EasyTdxMarketSync ── easy_tdx 在线 API + .day 写入 API ──┘
+        └── BacktestService ── easy_tdx BacktestEngine（交易与绩效基础设施）
 ```
 
 ## 分层规则
 
-- `adapters/` 是唯一的上游依赖边界，将 `SecurityBar` 转成项目自己的 DataFrame 字段：`date/open/high/low/close/volume/amount`。
+- `adapters/` 是行情数据的上游依赖边界，将 `SecurityBar` 转成项目自己的 DataFrame 字段：`date/open/high/low/close/volume/amount`；`backtest/` 只通过 easy-tdx 的公开回测 API 接入交易执行和绩效能力。
 - `formulas/` 不发网络请求、不修改传入 DataFrame；每个公式返回 `FormulaResult`，包含中间数组、命名输出、信号数组和最后一根已完成 K 线状态。
 - `screening/` 负责 universe、条件合并、单股容错、进度与 JSON/CSV；它不处理 HTTP。
 - `web/` 只做请求校验、任务轮询和安全错误响应，不操作上游对象。
@@ -31,6 +32,8 @@ ScreenEngine ── FormulaRegistry ── 三组纯公式
 页面保留“预置指标”和“自定义公式”两种模式。自定义模式先将公式提交到 `/parse`：解析器只接受白名单 AST 节点和数组函数，不执行用户 Python；`名称:=数值` 被识别为参数，`名称:表达式` 被识别为可选输出。扫描请求携带原始公式、参数覆盖值和选中的 `custom.*` 输出。
 
 行情同步复用同一个 `ScreenJobRunner` 生命周期：`EasyTdxMarketSync` 通过公开的 `TdxClient.get_security_list_all()`、`get_security_bars()` 获取沪深 A 股日线，再通过 `easy_tdx.offline.find_daily_bar_file()` 和 `sync_daily_bars_from_security_bars()` 写回目标 `vipdoc`。默认目标是容器内 `/data/vipdoc`，因此 named volume 模式和本地 bind 模式都能使用同一套同步逻辑。
+
+`BacktestService` 先在完整本地历史上计算预置或自定义公式的信号，再按日期区间截取信号和 K 线，使用 `easy_tdx.backtest.BacktestEngine` 的公开交易策略、订单撮合、持仓追踪和绩效分析能力。页面明确选择一个买入输出和一个卖出输出；持仓时只响应卖出信号，空仓时只响应买入信号，同一根 K 线同时满足时优先处理当前持仓的卖出逻辑。
 
 ## 公式一致性约束
 
@@ -61,5 +64,8 @@ ScreenEngine ── FormulaRegistry ── 三组纯公式
 - `GET /api/v1/formula-screen/jobs/{job_id}/export.csv`
 - `POST /api/v1/market-data/sync`
 - `GET /api/v1/market-data/sync/jobs/{job_id}`
+- `POST /api/v1/backtests`
+- `GET /api/v1/backtests/{job_id}`
+- `GET /api/v1/backtests/{job_id}/results`
 
 响应使用 `data`/`meta` 成功 envelope 和 `error.code/message` 错误 envelope；未处理异常写服务端日志但不会向前端发送 traceback。

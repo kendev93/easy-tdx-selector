@@ -66,3 +66,14 @@ def test_adapter_excludes_provisional_current_day_before_close(tmp_path: Path) -
         "2026-08-25",
         "2026-08-26",
     ]
+
+
+def test_adapter_builds_a_valid_single_stock_reference(tmp_path: Path) -> None:
+    vipdoc = tmp_path / "vipdoc"
+    vipdoc.mkdir()
+
+    ref = EasyTdxAdapter().stock_ref(vipdoc, "SH", "600000")
+
+    assert ref.market == "SH"
+    assert ref.code == "600000"
+    assert ref.path == vipdoc / "sh/lday/sh600000.day"

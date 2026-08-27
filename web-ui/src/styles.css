@@ -68,7 +68,7 @@ h1 { margin-bottom: 8px; font-size: clamp(32px, 4vw, 50px); line-height: 1; lett
 .form-section legend { width: 100%; padding: 0; margin-bottom: 13px; color: var(--text); font-size: 12px; font-weight: 700; }
 .form-section label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 11px; }
 .required { color: var(--accent); }
-input[type="text"], input[type="number"], select { width: 100%; min-height: 40px; padding: 0 11px; border: 1px solid var(--border-strong); border-radius: 6px; outline: none; background: var(--surface-raised); color: var(--text); font-size: 12px; }
+input[type="text"], input[type="number"], input[type="date"], select { width: 100%; min-height: 40px; padding: 0 11px; border: 1px solid var(--border-strong); border-radius: 6px; outline: none; background: var(--surface-raised); color: var(--text); font-size: 12px; }
 input::placeholder { color: #53637c; }
 input:hover, select:hover { border-color: #5a7295; }
 input:focus, select:focus { border-color: var(--accent); }
@@ -152,6 +152,27 @@ tbody tr:hover td { background: rgba(22, 34, 58, 0.45); }
 .value-list b { color: var(--subtle); font-weight: 500; }
 .failure-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; color: var(--danger); font-size: 10px; }
 .failure-summary strong { color: var(--text); }
+.backtest-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 15px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.result-badge { padding: 5px 7px; border: 1px solid rgba(34, 197, 94, 0.35); border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-weight: 800; }
+.backtest-metrics { grid-template-columns: repeat(3, 1fr); margin-bottom: 20px; }
+.positive { color: var(--accent) !important; }
+.negative { color: var(--danger) !important; }
+.signal-pair-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.chart-card { margin-bottom: 20px; padding: 15px; border: 1px solid var(--border); background: rgba(8, 15, 32, 0.72); }
+.chart-heading, .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.chart-heading h3, .section-heading h3 { margin: 5px 0 0; font-size: 14px; letter-spacing: -0.02em; }
+.chart-legend { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+.chart-legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; background: var(--accent); }
+.equity-chart { display: block; width: 100%; height: 220px; margin-top: 15px; overflow: visible; }
+.chart-summary { margin: 6px 0 0; color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.data-section { margin-top: 20px; }
+.section-heading { margin-bottom: 10px; color: var(--subtle); font-size: 10px; }
+.direction { display: inline-flex; min-width: 36px; justify-content: center; padding: 4px 6px; border: 1px solid var(--border-strong); border-radius: 3px; font-size: 10px; font-weight: 700; }
+.direction.buy { border-color: rgba(34, 197, 94, 0.45); color: var(--accent); }
+.direction.sell { border-color: rgba(248, 113, 113, 0.45); color: var(--danger); }
+.inline-empty { padding: 18px; border: 1px dashed var(--border); color: var(--subtle); font-size: 11px; text-align: center; }
+.diagnostic { margin: 15px 0 0; padding: 10px 12px; border-left: 2px solid var(--warning); background: rgba(245, 158, 11, 0.08); color: #fcd34d; font-size: 11px; line-height: 1.5; }
+.export-backtest { width: auto; margin-top: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 1100px) {
@@ -170,6 +191,7 @@ tbody tr:hover td { background: rgba(22, 34, 58, 0.45); }
   .config-panel { display: block; padding: 18px; }
   .results-panel { padding: 18px; }
   .parameter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .signal-pair-grid, .backtest-metrics { grid-template-columns: 1fr 1fr; }
   .results-heading { align-items: flex-start; flex-direction: column; }
   .metrics-strip { grid-template-columns: repeat(2, 1fr); }
   .empty-state { min-height: 250px; }

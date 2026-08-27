@@ -21,6 +21,10 @@ ProgressReporter = Callable[[int, int], None]
 GenericTask = Callable[[ProgressReporter], dict[str, object]]
 
 
+class TaskUserError(Exception):
+    """A safe, user-facing error raised by a background task."""
+
+
 class ScanEngineLike(Protocol):
     def scan(
         self,
@@ -123,6 +127,13 @@ class ScreenJobRunner:
 
         try:
             result = func(on_progress)
+        except TaskUserError as exc:
+            with self._lock:
+                state.status = "failed"
+                state.error = str(exc)
+                state.finished_at = time.time()
+                self._evict_if_needed_locked()
+            return
         except Exception:  # noqa: BLE001 - task errors are returned safely by API
             logger.exception("后台任务 %s 执行失败", job_id)
             with self._lock:

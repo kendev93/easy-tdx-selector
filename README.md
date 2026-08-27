@@ -14,6 +14,7 @@
 - 沪深全部 A 股、仅上海、仅深圳、自定义股票列表；
 - 排除 ETF、基金、指数、债券和未支持的北京市场文件；
 - 后台任务、进度、失败/跳过摘要、结果 JSON/CSV 导出；
+- 单股票公式回测：历史区间、买卖信号、全仓/固定股数、佣金/印花税/滑点、成交记录、净值曲线和绩效指标；
 - 一键同步通达信最新日线到共享 `vipdoc`，已存在日期自动跳过；
 - 公式层安全除零、数据不足跳过、无未来数据；
 - Python 单元/集成测试、Vue 单元测试和 Playwright E2E 流程。
@@ -46,7 +47,7 @@ npm install
 npm run dev
 ```
 
-浏览器打开 <http://127.0.0.1:5173/formula-screen>。Vite 会把 `/api` 请求代理到 `127.0.0.1:8000`。
+浏览器打开 <http://127.0.0.1:5173/formula-screen>。回测页面是 <http://127.0.0.1:5173/backtest>；Vite 会把 `/api` 请求代理到 `127.0.0.1:8000`。
 
 ## Docker Compose 启动
 
@@ -99,6 +100,20 @@ vipdoc/
 
 共享模式下不要让通达信桌面端和容器同时写同一只股票的同一个 `.day` 文件；应用内部已串行化同步与选股任务，跨应用的写入时序仍应由使用者错开。
 
+## 公式回测
+
+页面的“公式回测”针对一只沪深 A 股运行历史日线回测。预置模式可以直接选择买入和卖出输出；自定义模式先粘贴公式并解析，再分别选择两个输出。例如：
+
+```text
+N:=5;
+买入:CROSS(C,REF(C,N));
+卖出:CROSS(REF(C,N),C);
+```
+
+日期留空表示使用该股票全部本地历史；公式会先在完整历史上计算，再截取所选区间，因此区间起点不会丢失 `REF`、均线等指标的预热数据。默认信号在下一根 K 线开盘成交，也可以切换到下一根收盘；佣金、最低佣金、印花税和每股滑点均可调整。回测结果包含总收益、年化收益、最大回撤、夏普、胜率、成交记录、资金曲线和最近净值表。
+
+回测使用 easy-tdx 的公开 `BacktestEngine`，结果只保存在当前服务进程内存，服务重启后不会保留。历史回测不代表未来收益，交易成本、涨跌停、流动性和幸存者偏差仍可能使实际结果不同，请勿将回测结果直接视为投资建议。
+
 ## API 快速说明
 
 ```text
@@ -111,6 +126,9 @@ GET  /api/v1/formula-screen/jobs/{job_id}/export.json
 GET  /api/v1/formula-screen/jobs/{job_id}/export.csv
 POST /api/v1/market-data/sync
 GET  /api/v1/market-data/sync/jobs/{job_id}
+POST /api/v1/backtests
+GET  /api/v1/backtests/{job_id}
+GET  /api/v1/backtests/{job_id}/results
 ```
 
 提交任务必须至少选择一个信号；`at_least` 必须给出不超过所选信号数的 `minimum_matches`。自定义公式先调用 `/parse`，解析成功后再提交 `/jobs`；显式常量赋值如 `N:=5` 会生成参数控件，`SIGNAL:...` 会生成输出信号。完整 API 结构见 [docs/architecture.md](docs/architecture.md)。
