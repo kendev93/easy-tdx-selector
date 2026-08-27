@@ -18,7 +18,8 @@ ScreenEngine ── FormulaRegistry ── 三组纯公式
         │
         ├── EasyTdxAdapter ── easy_tdx 公共离线 API ── vipdoc/{sh,sz}/lday/*.day
         ├── EasyTdxMarketSync ── easy_tdx 在线 API + .day 写入 API ──┘
-        └── BacktestService ── easy_tdx BacktestEngine（交易与绩效基础设施）
+        ├── BacktestService ── easy_tdx BacktestEngine（单股票交易与绩效基础设施）
+        └── PortfolioBacktestService ── 动态排名、槽位补位 ── PerformanceAnalyzer（组合绩效）
 ```
 
 ## 分层规则
@@ -34,6 +35,8 @@ ScreenEngine ── FormulaRegistry ── 三组纯公式
 行情同步复用同一个 `ScreenJobRunner` 生命周期：`EasyTdxMarketSync` 通过公开的 `TdxClient.get_security_list_all()`、`get_security_bars()` 获取沪深 A 股日线，再通过 `easy_tdx.offline.find_daily_bar_file()` 和 `sync_daily_bars_from_security_bars()` 写回目标 `vipdoc`。默认目标是容器内 `/data/vipdoc`，因此 named volume 模式和本地 bind 模式都能使用同一套同步逻辑。
 
 `BacktestService` 先在完整本地历史上计算预置或自定义公式的信号，再按日期区间截取信号和 K 线，使用 `easy_tdx.backtest.BacktestEngine` 的公开交易策略、订单撮合、持仓追踪和绩效分析能力。页面明确选择一个买入输出和一个卖出输出；持仓时只响应卖出信号，空仓时只响应买入信号，同一根 K 线同时满足时优先处理当前持仓的卖出逻辑。
+
+`PortfolioBacktestService` 在相同的规范化日线和公式输出之上维护一个固定槽位的长仓组合。每个刷新日先筛选选股信号，再按指标值排序；已有持仓保留，卖出信号、止盈止损、指标阈值或指标比较触发后，下一根 K 线执行卖出并释放槽位，排名靠前的未持仓候选随后进入空槽。默认每个槽位使用组合总资产的等额预算并按 100 股整数下单。该动态候选轮换语义不是上游静态 `PortfolioBacktestEngine` 的能力，因此由本项目服务实现；绩效汇总复用 easy-tdx 的公开 `PerformanceAnalyzer`。
 
 ## 公式一致性约束
 
@@ -67,5 +70,8 @@ ScreenEngine ── FormulaRegistry ── 三组纯公式
 - `POST /api/v1/backtests`
 - `GET /api/v1/backtests/{job_id}`
 - `GET /api/v1/backtests/{job_id}/results`
+- `POST /api/v1/portfolio-backtests`
+- `GET /api/v1/portfolio-backtests/{job_id}`
+- `GET /api/v1/portfolio-backtests/{job_id}/results`
 
 响应使用 `data`/`meta` 成功 envelope 和 `error.code/message` 错误 envelope；未处理异常写服务端日志但不会向前端发送 traceback。

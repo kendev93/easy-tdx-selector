@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+import json
+from datetime import date
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from selector_app.adapters.easy_tdx_adapter import StockRef
+from selector_app.portfolio_backtest.models import PortfolioBacktestConfig
+from selector_app.portfolio_backtest.service import PortfolioBacktestService
+
+
+def stock_frame(close: list[float]) -> pd.DataFrame:
+    values = np.asarray(close, dtype=float)
+    return pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=len(values), freq="D"),
+            "open": values,
+            "high": values + 0.5,
+            "low": values - 0.5,
+            "close": values,
+            "volume": np.full(len(values), 100_000.0),
+            "amount": values * 100_000.0,
+        }
+    )
+
+
+class FakeAdapter:
+    def __init__(self) -> None:
+        self.frames = {
+            "600000": stock_frame([10, 11, 12, 13, 14, 15]),
+            "600001": stock_frame([20, 19, 18, 17, 16, 15]),
+            "600002": stock_frame([5, 6, 7, 8, 9, 10]),
+        }
+
+    def list_stock_refs(self, vipdoc_path, universe, universe_file=None):
+        return [
+            StockRef(market="SH", code=code, path=Path(vipdoc_path) / f"sh{code}.day")
+            for code in self.frames
+        ]
+
+    def read_stock(self, ref: StockRef) -> pd.DataFrame:
+        return self.frames[ref.code].copy(deep=True)
+
+
+class BrokenAdapter:
+    def list_stock_refs(self, vipdoc_path, universe, universe_file=None):
+        return [StockRef(market="SH", code="600999", path=Path(vipdoc_path) / "sh600999.day")]
+
+    def read_stock(self, ref: StockRef) -> pd.DataFrame:
+        raise ValueError("读取失败")
+
+
+def config(**overrides: object) -> PortfolioBacktestConfig:
+    values: dict[str, object] = {
+        "vipdoc_path": "/tmp/vipdoc",
+        "universe": "all",
+        "selected_signals": ("custom.buy",),
+        "combine_mode": "any",
+        "minimum_matches": None,
+        "ranking_value": "custom.rank",
+        "rank_order": "desc",
+        "max_positions": 2,
+        "rebalance_frequency": "daily",
+        "formula_text": "BUY:C>0; RANK:C;",
+        "start_date": date(2024, 1, 1),
+        "end_date": date(2024, 1, 6),
+        "stop_loss_pct": 0.05,
+        "initial_cash": 10_000.0,
+        "commission": 0.0,
+        "min_commission": 0.0,
+        "stamp_tax": 0.0,
+        "slippage": 0.0,
+    }
+    values.update(overrides)
+    return PortfolioBacktestConfig(**values)
+
+
+def test_portfolio_fills_a_vacated_slot_by_rank_after_stop_loss() -> None:
+    service = PortfolioBacktestService(adapter=FakeAdapter())
+
+    report = service.run(config())
+
+    assert report.total_candidates == 3
+    assert report.processed == 3
+    assert [trade["direction"] for trade in report.trades] == ["BUY", "BUY", "SELL", "BUY"]
+    assert [(trade["code"], trade["date"]) for trade in report.trades] == [
+        ("600001", "2024-01-02"),
+        ("600000", "2024-01-02"),
+        ("600001", "2024-01-04"),
+        ("600002", "2024-01-04"),
+    ]
+    assert {holding["code"] for holding in report.states[-1]["holdings"]} == {"600000", "600002"}
+    assert report.states[-1]["positions_count"] == 2
+    assert report.performance["end_value"] == 12_400.0
+    json.dumps(report.to_dict(), ensure_ascii=False)
+
+
+def test_portfolio_supports_indicator_threshold_exit() -> None:
+    service = PortfolioBacktestService(adapter=FakeAdapter())
+
+    report = service.run(
+        config(
+            formula_text="BUY:C>0; RANK:C; LEVEL:C;",
+            ranking_value="custom.rank",
+            sell_value="custom.level",
+            sell_value_operator="gte",
+            sell_value_threshold=14.0,
+            stop_loss_pct=None,
+        )
+    )
+
+    assert any(
+        trade["direction"] == "SELL" and trade["code"] == "600000" for trade in report.trades
+    )
+
+
+def test_portfolio_accepts_signed_indicator_thresholds() -> None:
+    configured = config(
+        formula_text="BUY:C>0; RANK:C; LEVEL:C-20;",
+        ranking_value="custom.rank",
+        sell_value="custom.level",
+        sell_value_operator="lte",
+        sell_value_threshold=-10.0,
+        stop_loss_pct=None,
+    )
+
+    assert configured.sell_value_threshold == -10.0
+
+
+def test_portfolio_supports_indicator_comparison_exit() -> None:
+    service = PortfolioBacktestService(adapter=FakeAdapter())
+
+    report = service.run(
+        config(
+            formula_text="BUY:C>0; RANK:C; FAST:C; SLOW:MA(C,2);",
+            ranking_value="custom.rank",
+            compare_left_value="custom.fast",
+            compare_operator="lt",
+            compare_right_value="custom.slow",
+            stop_loss_pct=None,
+        )
+    )
+
+    assert any(trade["direction"] == "SELL" for trade in report.trades)
+
+
+def test_empty_portfolio_report_counts_failed_stocks_as_skipped() -> None:
+    report = PortfolioBacktestService(adapter=BrokenAdapter()).run(config())
+
+    assert report.total_candidates == 1
+    assert report.processed == 0
+    assert report.skipped == 1
+    assert report.errors == 1

@@ -64,6 +64,7 @@ class FormulaDefinition:
     recommended_bars: int
     calculate: FormulaCalculator
     signals: tuple[SignalDefinition, ...]
+    value_names: tuple[str, ...]
 
 
 class FormulaRegistry:
@@ -83,6 +84,14 @@ class FormulaRegistry:
     def has_signal(self, signal_id: str) -> bool:
         return signal_id in self._signals
 
+    def has_value(self, value_id: str) -> bool:
+        formula_id, separator, value_name = value_id.partition(".")
+        return bool(
+            separator
+            and formula_id in self._by_id
+            and value_name in self._by_id[formula_id].value_names
+        )
+
     def formulas_for_signals(self, signal_ids: tuple[str, ...]) -> tuple[FormulaDefinition, ...]:
         formula_ids = {self.signal(signal_id).formula_id for signal_id in signal_ids}
         return tuple(definition for definition in self._definitions if definition.id in formula_ids)
@@ -101,6 +110,14 @@ class FormulaRegistry:
                         "description": signal.description,
                     }
                     for signal in definition.signals
+                ],
+                "values": [
+                    {
+                        "id": f"{definition.id}.{value_name}",
+                        "display_name": value_name,
+                        "description": f"{value_name} 的数值输出",
+                    }
+                    for value_name in definition.value_names
                 ],
             }
             for definition in self._definitions
@@ -129,6 +146,26 @@ FORMULA_REGISTRY = FormulaRegistry(
                 SignalDefinition(
                     "indicator_one.distribution", "出货", "VAR51 上升", "indicator_one"
                 ),
+            ),
+            value_names=(
+                "var1",
+                "var2_numerator",
+                "var2_denominator",
+                "var2",
+                "var3",
+                "var4",
+                "var5",
+                "main_force_entry",
+                "wash",
+                "var21_denominator_input",
+                "var21_numerator",
+                "var21_denominator",
+                "var21",
+                "var31",
+                "var41",
+                "var51",
+                "main_force_raise",
+                "distribution",
             ),
         ),
         FormulaDefinition(
@@ -164,6 +201,32 @@ FORMULA_REGISTRY = FormulaRegistry(
                     "indicator_two",
                 ),
             ),
+            value_names=(
+                "short_cost",
+                "a",
+                "x",
+                "mid_cost",
+                "var1",
+                "var2",
+                "var3",
+                "n1",
+                "n4",
+                "cq",
+                "mid_term",
+                "sat",
+                "saturation",
+                "w1",
+                "w2",
+                "w3",
+                "w4",
+                "holding_base",
+                "holding",
+                "support",
+                "short_line",
+                "mid_line",
+                "start",
+                "end",
+            ),
         ),
         FormulaDefinition(
             id="indicator_three",
@@ -185,6 +248,19 @@ FORMULA_REGISTRY = FormulaRegistry(
                     "indicator_three.begin_zone", "始", "VAR1 < 10", "indicator_three"
                 ),
                 SignalDefinition("indicator_three.end_zone", "终", "VAR1 > 90", "indicator_three"),
+            ),
+            value_names=(
+                "n",
+                "stochastic_base",
+                "sma_inner",
+                "var1",
+                "var2",
+                "varo5",
+                "varo6",
+                "varo7",
+                "prepare_rally",
+                "suppress_main",
+                "accumulation_zone",
             ),
         ),
     )

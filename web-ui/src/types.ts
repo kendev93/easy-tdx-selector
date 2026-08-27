@@ -3,8 +3,18 @@ export type Universe = 'all' | 'sh' | 'sz' | 'custom'
 export type FormulaMode = 'preset' | 'custom'
 export type BacktestExecution = 'next_open' | 'next_close'
 export type BacktestPositionMode = 'full' | 'fixed'
+export type PortfolioRankOrder = 'asc' | 'desc'
+export type PortfolioRebalanceFrequency = 'daily' | 'weekly' | 'monthly'
+export type PortfolioSellValueOperator = 'gte' | 'lte'
+export type PortfolioCompareOperator = 'gt' | 'gte' | 'lt' | 'lte'
 
 export interface SignalDefinition {
+  id: string
+  display_name: string
+  description: string
+}
+
+export interface ValueDefinition {
   id: string
   display_name: string
   description: string
@@ -16,6 +26,7 @@ export interface IndicatorDefinition {
   minimum_bars: number
   recommended_bars: number
   signals: SignalDefinition[]
+  values?: ValueDefinition[]
 }
 
 export interface FormulaScreenMetadata {
@@ -45,6 +56,7 @@ export interface CustomSignalDefinition {
 export interface CustomFormulaMetadata {
   parameters: CustomParameterDefinition[]
   signals: CustomSignalDefinition[]
+  values?: ValueDefinition[]
   minimum_bars: number
   warnings: string[]
 }
@@ -203,4 +215,128 @@ export interface BacktestJobState {
   errors: number
   error: string | null
   result: BacktestResult | null
+}
+
+export interface PortfolioBacktestPayload {
+  vipdoc_path: string
+  universe: Universe
+  universe_file?: string | null
+  selected_signals: string[]
+  combine_mode: CombineMode
+  minimum_matches: number | null
+  ranking_value: string
+  rank_order?: PortfolioRankOrder
+  max_positions: number
+  rebalance_frequency?: PortfolioRebalanceFrequency
+  formula_text?: string | null
+  formula_parameters?: Record<string, number>
+  sell_signal?: string | null
+  stop_loss_pct?: number | null
+  take_profit_pct?: number | null
+  sell_value?: string | null
+  sell_value_operator?: PortfolioSellValueOperator | null
+  sell_value_threshold?: number | null
+  compare_left_value?: string | null
+  compare_operator?: PortfolioCompareOperator | null
+  compare_right_value?: string | null
+  start_date?: string | null
+  end_date?: string | null
+  initial_cash?: number
+  commission?: number
+  min_commission?: number
+  stamp_tax?: number
+  slippage?: number
+  execution?: BacktestExecution
+}
+
+export interface PortfolioBacktestJobState {
+  job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  progress: number
+  total_candidates: number
+  total_scanned: number
+  errors: number
+  error: string | null
+  result: PortfolioBacktestResult | null
+}
+
+export interface PortfolioEquityPoint {
+  date: string
+  cash: number
+  position_value: number
+  total: number
+  positions_count: number
+  drawdown: number
+  drawdown_pct: number
+}
+
+export interface PortfolioTrade {
+  date: string
+  signal_date: string
+  market: 'SH' | 'SZ'
+  code: string
+  direction: 'BUY' | 'SELL'
+  size: number
+  price: number
+  commission: number
+  stamp_tax: number
+  slippage: number
+  pnl: number
+  cost_basis: number
+  reason: string
+  rejected: boolean
+}
+
+export interface PortfolioHolding {
+  market: 'SH' | 'SZ'
+  code: string
+  size: number
+  entry_price: number
+  close: number
+  unrealized_pnl: number
+}
+
+export interface PortfolioState {
+  date: string
+  cash: number
+  position_value: number
+  total: number
+  positions_count: number
+  holdings: PortfolioHolding[]
+}
+
+export interface PortfolioRankingCandidate {
+  rank: number
+  market: 'SH' | 'SZ'
+  code: string
+  score: number
+  selected: boolean
+}
+
+export interface PortfolioRankingEvent {
+  date: string
+  slots_available: number
+  ranking_value: string
+  candidates: PortfolioRankingCandidate[]
+}
+
+export interface PortfolioBacktestResult {
+  universe: Universe
+  total_candidates: number
+  processed: number
+  skipped: number
+  errors: number
+  bars: number
+  start_date: string
+  end_date: string
+  max_positions: number
+  ranking_value: string
+  rank_order: PortfolioRankOrder
+  performance: Record<string, number | null>
+  equity_curve: PortfolioEquityPoint[]
+  trades: PortfolioTrade[]
+  states: PortfolioState[]
+  ranking_events: PortfolioRankingEvent[]
+  failure_reasons: Record<string, number>
+  diagnostic: string | null
 }

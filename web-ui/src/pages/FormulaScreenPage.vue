@@ -225,7 +225,8 @@ watch(() => form.formulaText, (value) => {
       </a>
       <nav aria-label="主导航">
         <a class="nav-link active" href="/formula-screen" aria-current="page">公式选股</a>
-        <a class="nav-link" href="/backtest">公式回测</a>
+        <a class="nav-link" href="/backtest">单股回测</a>
+        <a class="nav-link" href="/portfolio-backtest">组合回测</a>
       </nav>
       <div class="topbar-status"><span class="status-dot" aria-hidden="true"></span> 本地数据模式</div>
     </header>

@@ -1,0 +1,185 @@
+"""Immutable configuration and JSON-ready reports for portfolio rotation."""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path
+from types import MappingProxyType
+from typing import Literal
+
+PortfolioUniverse = Literal["all", "sh", "sz", "custom"]
+RankOrder = Literal["asc", "desc"]
+RebalanceFrequency = Literal["daily", "weekly", "monthly"]
+ExecutionMode = Literal["next_open", "next_close"]
+SellValueOperator = Literal["gte", "lte"]
+CompareOperator = Literal["gt", "gte", "lt", "lte"]
+PortfolioJsonValue = object
+
+
+@dataclass(frozen=True)
+class PortfolioBacktestConfig:
+    """Configuration for a daily, slot-based long-only portfolio backtest."""
+
+    vipdoc_path: str | Path
+    universe: PortfolioUniverse
+    selected_signals: tuple[str, ...]
+    combine_mode: str
+    minimum_matches: int | None
+    ranking_value: str
+    rank_order: RankOrder = "desc"
+    max_positions: int = 5
+    rebalance_frequency: RebalanceFrequency = "daily"
+    execution: ExecutionMode = "next_open"
+    universe_file: str | Path | None = None
+    formula_text: str | None = None
+    formula_parameters: Mapping[str, float] = field(default_factory=dict)
+    sell_signal: str | None = None
+    stop_loss_pct: float | None = None
+    take_profit_pct: float | None = None
+    sell_value: str | None = None
+    sell_value_operator: SellValueOperator | None = None
+    sell_value_threshold: float | None = None
+    compare_left_value: str | None = None
+    compare_operator: CompareOperator | None = None
+    compare_right_value: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    initial_cash: float = 1_000_000.0
+    commission: float = 0.0003
+    min_commission: float = 5.0
+    stamp_tax: float = 0.001
+    slippage: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.universe not in {"all", "sh", "sz", "custom"}:
+            raise ValueError("不支持的组合回测范围")
+        if not self.selected_signals:
+            raise ValueError("至少需要一个选股条件")
+        if len(set(self.selected_signals)) != len(self.selected_signals):
+            raise ValueError("选股条件不能重复")
+        if self.combine_mode not in {"all", "any", "at_least"}:
+            raise ValueError("不支持的条件组合方式")
+        if self.combine_mode == "at_least":
+            if self.minimum_matches is None or not 1 <= self.minimum_matches <= len(
+                self.selected_signals
+            ):
+                raise ValueError("minimum_matches 必须在选股条件数量范围内")
+        elif self.minimum_matches is not None:
+            raise ValueError("all/any 模式不应设置 minimum_matches")
+        if not self.ranking_value.strip():
+            raise ValueError("排序指标不能为空")
+        if not 1 <= self.max_positions <= 100:
+            raise ValueError("持仓槽位数量必须在 1 到 100 之间")
+        if self.rebalance_frequency not in {"daily", "weekly", "monthly"}:
+            raise ValueError("不支持的候选刷新频率")
+        if self.execution not in {"next_open", "next_close"}:
+            raise ValueError("不支持的成交方式")
+        if self.start_date is not None and self.end_date is not None:
+            if self.start_date > self.end_date:
+                raise ValueError("回测开始日期不能晚于结束日期")
+        _validate_non_negative("initial_cash", self.initial_cash, strictly_positive=True)
+        for name, value in {
+            "commission": self.commission,
+            "min_commission": self.min_commission,
+            "stamp_tax": self.stamp_tax,
+            "slippage": self.slippage,
+        }.items():
+            _validate_non_negative(name, value)
+        for name, optional_value in {
+            "stop_loss_pct": self.stop_loss_pct,
+            "take_profit_pct": self.take_profit_pct,
+        }.items():
+            if optional_value is not None and (
+                not math.isfinite(optional_value) or optional_value < 0
+            ):
+                raise ValueError(f"{name} 必须是大于等于 0 的有限数字")
+        if self.sell_value_threshold is not None and not math.isfinite(self.sell_value_threshold):
+            raise ValueError("sell_value_threshold 必须是有限数字")
+        if self.sell_value is None:
+            if self.sell_value_operator is not None or self.sell_value_threshold is not None:
+                raise ValueError("指标阈值卖出规则缺少指标")
+        elif self.sell_value_operator is None or self.sell_value_threshold is None:
+            raise ValueError("指标阈值卖出规则需要指标、比较方式和阈值")
+        comparison = (
+            self.compare_left_value,
+            self.compare_operator,
+            self.compare_right_value,
+        )
+        if any(value is not None for value in comparison) and not all(
+            value is not None for value in comparison
+        ):
+            raise ValueError("指标比较卖出规则需要左右指标和比较方式")
+        if (
+            self.sell_signal is None
+            and self.stop_loss_pct is None
+            and self.take_profit_pct is None
+            and self.sell_value is None
+            and self.compare_left_value is None
+        ):
+            raise ValueError("至少需要设置一个卖出规则")
+        object.__setattr__(self, "ranking_value", self.ranking_value.strip())
+        object.__setattr__(
+            self, "formula_text", self.formula_text.strip() if self.formula_text else None
+        )
+        object.__setattr__(
+            self, "formula_parameters", MappingProxyType(dict(self.formula_parameters))
+        )
+
+
+def _validate_non_negative(name: str, value: float, *, strictly_positive: bool = False) -> None:
+    if not math.isfinite(value) or (value <= 0 if strictly_positive else value < 0):
+        operator = "大于 0" if strictly_positive else "大于等于 0"
+        raise ValueError(f"{name} 必须是{operator}的有限数字")
+
+
+@dataclass(frozen=True)
+class PortfolioBacktestReport:
+    """JSON-ready dynamic portfolio result."""
+
+    universe: str
+    total_candidates: int
+    processed: int
+    skipped: int
+    errors: int
+    bars: int
+    start_date: str
+    end_date: str
+    max_positions: int
+    ranking_value: str
+    rank_order: str
+    performance: Mapping[str, float | None]
+    equity_curve: tuple[Mapping[str, PortfolioJsonValue], ...]
+    trades: tuple[Mapping[str, PortfolioJsonValue], ...]
+    states: tuple[Mapping[str, PortfolioJsonValue], ...]
+    ranking_events: tuple[Mapping[str, PortfolioJsonValue], ...]
+    failure_reasons: Mapping[str, int]
+    diagnostic: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "performance", MappingProxyType(dict(self.performance)))
+        object.__setattr__(self, "failure_reasons", MappingProxyType(dict(self.failure_reasons)))
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "universe": self.universe,
+            "total_candidates": self.total_candidates,
+            "processed": self.processed,
+            "skipped": self.skipped,
+            "errors": self.errors,
+            "bars": self.bars,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "max_positions": self.max_positions,
+            "ranking_value": self.ranking_value,
+            "rank_order": self.rank_order,
+            "performance": dict(self.performance),
+            "equity_curve": [dict(row) for row in self.equity_curve],
+            "trades": [dict(row) for row in self.trades],
+            "states": [dict(row) for row in self.states],
+            "ranking_events": [dict(row) for row in self.ranking_events],
+            "failure_reasons": dict(self.failure_reasons),
+            "diagnostic": self.diagnostic,
+        }

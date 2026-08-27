@@ -3,9 +3,9 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 from easy_tdx import SecurityBar
 from easy_tdx.offline import append_daily_bars
+from fastapi.testclient import TestClient
 
 from selector_app.screening.models import ScanReport
 from selector_app.web.app import create_app
@@ -97,6 +97,7 @@ def test_custom_formula_parse_returns_parameters_and_outputs() -> None:
     assert data["parameters"][0]["name"] == "N"
     assert data["parameters"][0]["default"] == 5
     assert data["signals"][0]["id"] == "custom.breakout"
+    assert data["values"][0]["id"] == "custom.n"
 
 
 def test_custom_formula_unsafe_input_is_rejected(tmp_path: Path) -> None:
@@ -371,6 +372,80 @@ def test_backtest_task_returns_a_safe_domain_error(tmp_path: Path) -> None:
 
     assert state is not None
     assert state["error"] == "指定日期范围内没有可用日线数据"
+
+
+def test_portfolio_backtest_job_can_be_created_and_polled(tmp_path: Path) -> None:
+    class FakePortfolioService:
+        def run(self, config, progress_callback=None):
+            if progress_callback:
+                progress_callback(2, 2)
+            return {
+                "universe": "all",
+                "total_candidates": 2,
+                "processed": 2,
+                "skipped": 0,
+                "errors": 0,
+                "bars": 5,
+                "start_date": "2024-01-02",
+                "end_date": "2024-01-06",
+                "max_positions": config.max_positions,
+                "ranking_value": config.ranking_value,
+                "rank_order": config.rank_order,
+                "performance": {"total_return": 0.12},
+                "equity_curve": [],
+                "trades": [],
+                "states": [],
+                "ranking_events": [],
+                "failure_reasons": {},
+                "diagnostic": None,
+            }
+
+    with TestClient(
+        create_app(
+            engine=EmptyEngine(),
+            portfolio_backtest_service=FakePortfolioService(),
+        )
+    ) as client:
+        response = client.post(
+            "/api/v1/portfolio-backtests",
+            json={
+                "vipdoc_path": str(tmp_path),
+                "universe": "all",
+                "selected_signals": ["custom.buy"],
+                "combine_mode": "any",
+                "ranking_value": "custom.rank",
+                "max_positions": 2,
+                "formula_text": "BUY:C>0; RANK:C;",
+                "stop_loss_pct": 0.05,
+            },
+        )
+        assert response.status_code == 202
+        job_id = response.json()["data"]["job_id"]
+        state = wait_for_done(client, job_id, "/api/v1/portfolio-backtests")
+        results_response = client.get(f"/api/v1/portfolio-backtests/{job_id}/results")
+
+    assert state["status"] == "completed"
+    assert state["result"] is None
+    assert results_response.status_code == 200
+    assert results_response.json()["data"]["max_positions"] == 2
+
+
+def test_portfolio_backtest_requires_a_sell_rule(tmp_path: Path) -> None:
+    with TestClient(create_app(engine=EmptyEngine())) as client:
+        response = client.post(
+            "/api/v1/portfolio-backtests",
+            json={
+                "vipdoc_path": str(tmp_path),
+                "universe": "all",
+                "selected_signals": ["indicator_three.begin_zone"],
+                "combine_mode": "any",
+                "ranking_value": "indicator_three.varo7",
+                "max_positions": 2,
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
 
 
 def test_unexpected_job_failure_does_not_expose_internal_stack_trace() -> None:

@@ -10,8 +10,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from selector_app.backtest.models import BacktestConfig
-from selector_app.formulas.custom import FormulaParseError, parse_formula
+from selector_app.formulas.custom import FormulaParseError, custom_output_id, parse_formula
 from selector_app.formulas.registry import FORMULA_REGISTRY
+from selector_app.portfolio_backtest.models import (
+    PortfolioBacktestConfig,
+    PortfolioUniverse,
+)
 from selector_app.screening.models import ScanConfig
 
 
@@ -48,6 +52,22 @@ def validate_formula_signals(
             raise ValueError("预置公式不接受自定义参数")
     if invalid:
         raise ValueError(f"未知选股信号: {', '.join(invalid)}")
+
+
+def validate_formula_values(formula_text: str | None, value_ids: list[str]) -> None:
+    """Validate numeric output identifiers used for ranking or exits."""
+
+    if formula_text:
+        try:
+            parsed = parse_formula(formula_text)
+        except FormulaParseError as exc:
+            raise ValueError(str(exc)) from exc
+        available = {custom_output_id(name) for name in parsed.value_names}
+        invalid = [value_id for value_id in value_ids if value_id not in available]
+    else:
+        invalid = [value_id for value_id in value_ids if not FORMULA_REGISTRY.has_value(value_id)]
+    if invalid:
+        raise ValueError(f"未知指标输出: {', '.join(invalid)}")
 
 
 class FormulaScreenRequest(BaseModel):
@@ -183,4 +203,120 @@ class BacktestRequest(BaseModel):
             execution=self.execution,
             position_mode=self.position_mode,
             fixed_size=self.fixed_size,
+        )
+
+
+class PortfolioBacktestRequest(BaseModel):
+    """Dynamic ranked-slot portfolio backtest request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    vipdoc_path: str = Field(default="/data/vipdoc", min_length=1, max_length=1024)
+    universe: PortfolioUniverse = "all"
+    universe_file: str | None = Field(default=None, max_length=1024)
+    selected_signals: list[str] = Field(min_length=1, max_length=32)
+    combine_mode: Literal["all", "any", "at_least"] = "any"
+    minimum_matches: int | None = Field(default=None, ge=1, le=32)
+    ranking_value: str = Field(min_length=1, max_length=128)
+    rank_order: Literal["asc", "desc"] = "desc"
+    max_positions: int = Field(default=5, ge=1, le=100)
+    rebalance_frequency: Literal["daily", "weekly", "monthly"] = "daily"
+    formula_text: str | None = Field(default=None, max_length=20_000)
+    formula_parameters: dict[str, float] = Field(default_factory=dict, max_length=32)
+    sell_signal: str | None = Field(default=None, max_length=128)
+    stop_loss_pct: float | None = Field(default=None, gt=0, le=1)
+    take_profit_pct: float | None = Field(default=None, gt=0, le=10)
+    sell_value: str | None = Field(default=None, max_length=128)
+    sell_value_operator: Literal["gte", "lte"] | None = None
+    sell_value_threshold: float | None = None
+    compare_left_value: str | None = Field(default=None, max_length=128)
+    compare_operator: Literal["gt", "gte", "lt", "lte"] | None = None
+    compare_right_value: str | None = Field(default=None, max_length=128)
+    start_date: date | None = None
+    end_date: date | None = None
+    initial_cash: float = Field(default=1_000_000.0, gt=0, le=1_000_000_000_000)
+    commission: float = Field(default=0.0003, ge=0, le=0.1)
+    min_commission: float = Field(default=5.0, ge=0, le=100_000)
+    stamp_tax: float = Field(default=0.001, ge=0, le=0.1)
+    slippage: float = Field(default=0.0, ge=0, le=1_000)
+    execution: Literal["next_open", "next_close"] = "next_open"
+
+    @model_validator(mode="after")
+    def validate_portfolio_backtest(self) -> PortfolioBacktestRequest:
+        signal_ids = list(self.selected_signals)
+        if self.sell_signal is not None:
+            signal_ids.append(self.sell_signal)
+        validate_formula_signals(self.formula_text, signal_ids, self.formula_parameters)
+        validate_formula_values(
+            self.formula_text,
+            [
+                self.ranking_value,
+                *([self.sell_value] if self.sell_value is not None else []),
+                *([self.compare_left_value] if self.compare_left_value is not None else []),
+                *([self.compare_right_value] if self.compare_right_value is not None else []),
+            ],
+        )
+        if len(set(self.selected_signals)) != len(self.selected_signals):
+            raise ValueError("选股条件不能重复")
+        if self.combine_mode == "at_least":
+            if self.minimum_matches is None or self.minimum_matches > len(self.selected_signals):
+                raise ValueError("minimum_matches 不能大于已选择条件数量")
+        elif self.minimum_matches is not None:
+            raise ValueError("all/any 模式不应设置 minimum_matches")
+        if self.universe == "custom" and not self.universe_file:
+            raise ValueError("自定义股票范围必须设置 universe_file")
+        if self.start_date is not None and self.end_date is not None:
+            if self.start_date > self.end_date:
+                raise ValueError("回测开始日期不能晚于结束日期")
+        if self.sell_value is None:
+            if self.sell_value_operator is not None or self.sell_value_threshold is not None:
+                raise ValueError("指标阈值卖出规则缺少指标")
+        elif self.sell_value_operator is None or self.sell_value_threshold is None:
+            raise ValueError("指标阈值卖出规则需要指标、比较方式和阈值")
+        comparison = (self.compare_left_value, self.compare_operator, self.compare_right_value)
+        if any(value is not None for value in comparison) and not all(
+            value is not None for value in comparison
+        ):
+            raise ValueError("指标比较卖出规则需要左右指标和比较方式")
+        if (
+            self.sell_signal is None
+            and self.stop_loss_pct is None
+            and self.take_profit_pct is None
+            and self.sell_value is None
+            and self.compare_left_value is None
+        ):
+            raise ValueError("至少需要设置一个卖出规则")
+        return self
+
+    def to_config(self) -> PortfolioBacktestConfig:
+        return PortfolioBacktestConfig(
+            vipdoc_path=self.vipdoc_path,
+            universe=self.universe,
+            universe_file=self.universe_file,
+            selected_signals=tuple(self.selected_signals),
+            combine_mode=self.combine_mode,
+            minimum_matches=self.minimum_matches,
+            ranking_value=self.ranking_value,
+            rank_order=self.rank_order,
+            max_positions=self.max_positions,
+            rebalance_frequency=self.rebalance_frequency,
+            formula_text=self.formula_text,
+            formula_parameters=self.formula_parameters,
+            sell_signal=self.sell_signal,
+            stop_loss_pct=self.stop_loss_pct,
+            take_profit_pct=self.take_profit_pct,
+            sell_value=self.sell_value,
+            sell_value_operator=self.sell_value_operator,
+            sell_value_threshold=self.sell_value_threshold,
+            compare_left_value=self.compare_left_value,
+            compare_operator=self.compare_operator,
+            compare_right_value=self.compare_right_value,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            initial_cash=self.initial_cash,
+            commission=self.commission,
+            min_commission=self.min_commission,
+            stamp_tax=self.stamp_tax,
+            slippage=self.slippage,
+            execution=self.execution,
         )

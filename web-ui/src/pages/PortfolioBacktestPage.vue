@@ -1,0 +1,552 @@
+<script setup lang="ts">
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+
+import { createPortfolioBacktest, getPortfolioBacktest, getPortfolioBacktestResults } from '../api/portfolioBacktest'
+import { FormulaScreenApiError, fetchMetadata, parseFormula } from '../api/formulaScreen'
+import type {
+  BacktestExecution,
+  CombineMode,
+  CustomFormulaMetadata,
+  FormulaScreenMetadata,
+  PortfolioBacktestJobState,
+  PortfolioBacktestPayload,
+  PortfolioBacktestResult,
+  PortfolioCompareOperator,
+  PortfolioRebalanceFrequency,
+  PortfolioSellValueOperator,
+  SignalDefinition,
+  Universe,
+  ValueDefinition,
+} from '../types'
+import { signalDisplayName } from '../utils/formulaScreen'
+
+interface PortfolioFormState {
+  mode: 'preset' | 'custom'
+  selectedSignals: string[]
+  combineMode: CombineMode
+  minimumMatches: number | null
+  universe: Universe
+  universeFile: string
+  vipdocPath: string
+  rankingValue: string
+  rankOrder: 'asc' | 'desc'
+  maxPositions: number
+  rebalanceFrequency: PortfolioRebalanceFrequency
+  execution: BacktestExecution
+  formulaText: string
+  formulaParameters: Record<string, number>
+  sellSignal: string
+  stopLossEnabled: boolean
+  stopLossPct: number
+  takeProfitEnabled: boolean
+  takeProfitPct: number
+  sellValue: string
+  sellValueOperator: PortfolioSellValueOperator
+  sellValueThreshold: number
+  compareLeftValue: string
+  compareOperator: PortfolioCompareOperator
+  compareRightValue: string
+  startDate: string
+  endDate: string
+  initialCash: number
+  commission: number
+  minCommission: number
+  stampTax: number
+  slippage: number
+}
+
+const metadata = ref<FormulaScreenMetadata | null>(null)
+const customMetadata = ref<CustomFormulaMetadata | null>(null)
+const parsedFormulaText = ref('')
+const form = reactive<PortfolioFormState>({
+  mode: 'preset',
+  selectedSignals: [],
+  combineMode: 'any',
+  minimumMatches: null,
+  universe: 'all',
+  universeFile: '',
+  vipdocPath: '',
+  rankingValue: '',
+  rankOrder: 'desc',
+  maxPositions: 5,
+  rebalanceFrequency: 'daily',
+  execution: 'next_open',
+  formulaText: '',
+  formulaParameters: {},
+  sellSignal: '',
+  stopLossEnabled: true,
+  stopLossPct: 8,
+  takeProfitEnabled: false,
+  takeProfitPct: 20,
+  sellValue: '',
+  sellValueOperator: 'lte',
+  sellValueThreshold: 0,
+  compareLeftValue: '',
+  compareOperator: 'lt',
+  compareRightValue: '',
+  startDate: '',
+  endDate: '',
+  initialCash: 1_000_000,
+  commission: 0.0003,
+  minCommission: 5,
+  stampTax: 0.001,
+  slippage: 0,
+})
+const errors = ref<Record<string, string>>({})
+const message = ref('')
+const loading = ref(false)
+const customParseLoading = ref(false)
+const customParseError = ref('')
+const showAdvanced = ref(false)
+const job = ref<PortfolioBacktestJobState | null>(null)
+const result = ref<PortfolioBacktestResult | null>(null)
+
+const presetSignals = computed<SignalDefinition[]>(() => (
+  metadata.value?.indicators.flatMap((indicator) => indicator.signals) ?? []
+))
+const presetValues = computed<ValueDefinition[]>(() => (
+  metadata.value?.indicators.flatMap((indicator) => indicator.values ?? []) ?? []
+))
+const availableSignals = computed<SignalDefinition[]>(() => (
+  form.mode === 'custom' ? customMetadata.value?.signals ?? [] : presetSignals.value
+))
+const availableValues = computed<ValueDefinition[]>(() => (
+  form.mode === 'custom' ? customMetadata.value?.values ?? [] : presetValues.value
+))
+const latestState = computed(() => result.value?.states.at(-1) ?? null)
+const latestRanking = computed(() => result.value?.ranking_events.at(-1) ?? null)
+const sampledEquity = computed(() => {
+  const curve = result.value?.equity_curve ?? []
+  return curve.length > 60 ? curve.slice(-60) : curve
+})
+const recentTrades = computed(() => (result.value?.trades ?? []).slice(-100).reverse())
+const chartPoints = computed(() => {
+  const curve = result.value?.equity_curve ?? []
+  if (curve.length < 2) return ''
+  const sample = curve.length > 120
+    ? curve.filter((_, index) => index % Math.ceil(curve.length / 120) === 0)
+    : curve
+  const values = sample.map((point) => point.total)
+  const minimum = Math.min(...values)
+  const maximum = Math.max(...values)
+  const span = maximum - minimum || 1
+  return sample.map((point, index) => {
+    const x = (index / Math.max(sample.length - 1, 1)) * 800
+    const y = 220 - ((point.total - minimum) / span) * 190
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+})
+const chartSummary = computed(() => {
+  const curve = result.value?.equity_curve ?? []
+  if (!curve.length) return '暂无净值数据'
+  const first = curve[0].total
+  const last = curve[curve.length - 1].total
+  return `组合净值从 ${formatMoney(first)} 变为 ${formatMoney(last)}，共 ${curve.length} 个交易日`
+})
+const canSubmit = computed(() => (
+  !loading.value
+  && !customParseLoading.value
+  && metadata.value !== null
+  && (form.mode !== 'custom' || customMetadata.value !== null)
+))
+
+function firstSignal(suffix: string, fallback = ''): string {
+  return availableSignals.value.find((signal) => signal.id.endsWith(suffix))?.id
+    ?? availableSignals.value[0]?.id
+    ?? fallback
+}
+
+function firstValue(fallback = ''): string {
+  return availableValues.value[0]?.id ?? fallback
+}
+
+function resetPresetDefaults(): void {
+  const buySignal = firstSignal('prepare_rally')
+  form.selectedSignals = buySignal ? [buySignal] : []
+  form.sellSignal = firstSignal('end_zone')
+  form.rankingValue = firstValue()
+}
+
+function setMode(mode: PortfolioFormState['mode']): void {
+  if (form.mode === mode) return
+  form.mode = mode
+  errors.value = {}
+  message.value = ''
+  customParseError.value = ''
+  if (mode === 'preset') {
+    customMetadata.value = null
+    parsedFormulaText.value = ''
+    resetPresetDefaults()
+  } else {
+    form.selectedSignals = []
+    form.sellSignal = ''
+    form.rankingValue = ''
+  }
+}
+
+function toggleSignal(signalId: string, checked: boolean): void {
+  const next = new Set(form.selectedSignals)
+  if (checked) next.add(signalId)
+  else next.delete(signalId)
+  form.selectedSignals = [...next]
+  if (errors.value.selectedSignals) errors.value = { ...errors.value, selectedSignals: '' }
+}
+
+async function parseCustomFormula(): Promise<void> {
+  customParseError.value = ''
+  if (!form.formulaText.trim()) {
+    customParseError.value = '请输入通达信公式后再解析。'
+    return
+  }
+  customParseLoading.value = true
+  try {
+    const parsed = await parseFormula(form.formulaText)
+    customMetadata.value = parsed
+    parsedFormulaText.value = form.formulaText.trim()
+    const previousParameters = form.formulaParameters
+    form.formulaParameters = Object.fromEntries(
+      parsed.parameters.map((parameter) => [
+        parameter.name,
+        previousParameters[parameter.name] ?? parameter.default,
+      ]),
+    )
+    form.selectedSignals = parsed.signals.length ? [parsed.signals[0].id] : []
+    form.sellSignal = parsed.signals[1]?.id ?? ''
+    form.rankingValue = parsed.values?.[0]?.id ?? ''
+    errors.value = {}
+    message.value = `公式解析完成：识别 ${parsed.parameters.length} 个参数、${parsed.signals.length} 个信号、${parsed.values?.length ?? 0} 个指标输出。`
+  } catch (error) {
+    customMetadata.value = null
+    parsedFormulaText.value = ''
+    form.selectedSignals = []
+    form.sellSignal = ''
+    form.rankingValue = ''
+    customParseError.value = error instanceof FormulaScreenApiError
+      ? error.message
+      : '公式解析失败，请检查语法和函数是否受支持。'
+  } finally {
+    customParseLoading.value = false
+  }
+}
+
+function validate(): Record<string, string> {
+  const next: Record<string, string> = {}
+  if (!form.selectedSignals.length) next.selectedSignals = '至少选择一个选股条件。'
+  if (form.combineMode === 'at_least' && (!form.minimumMatches || form.minimumMatches > form.selectedSignals.length)) {
+    next.minimumMatches = '至少满足数量不能超过已选择条件数。'
+  }
+  if (!form.rankingValue) next.rankingValue = '请选择用于排序的指标输出。'
+  if (form.universe === 'custom' && !form.universeFile.trim()) next.universeFile = '请输入自定义股票列表文件。'
+  if (form.mode === 'custom') {
+    if (!form.formulaText.trim()) next.formulaText = '请输入通达信公式。'
+    else if (!customMetadata.value) next.formulaText = '请先解析公式，再配置组合回测。'
+    if (customMetadata.value) {
+      for (const parameter of customMetadata.value.parameters) {
+        const value = form.formulaParameters[parameter.name]
+        if (!Number.isFinite(value) || value < parameter.minimum || value > parameter.maximum) {
+          next.formulaParameters = `参数 ${parameter.name} 必须在 ${parameter.minimum} 到 ${parameter.maximum} 之间。`
+          break
+        }
+        if (parameter.step === 1 && !Number.isInteger(value)) {
+          next.formulaParameters = `参数 ${parameter.name} 必须是整数。`
+          break
+        }
+      }
+    }
+  }
+  if (!form.vipdocPath.trim()) next.vipdocPath = '请输入通达信 vipdoc 数据目录。'
+  if (form.startDate && form.endDate && form.startDate > form.endDate) next.endDate = '结束日期不能早于开始日期。'
+  if (!Number.isFinite(form.maxPositions) || !Number.isInteger(form.maxPositions) || form.maxPositions < 1 || form.maxPositions > 100) {
+    next.maxPositions = '持仓槽位必须是 1 到 100 的整数。'
+  }
+  if (!form.sellSignal && !form.stopLossEnabled && !form.takeProfitEnabled && !form.sellValue && !form.compareLeftValue) {
+    next.sellRules = '至少配置一个卖出规则。'
+  }
+  if (form.stopLossEnabled && (!Number.isFinite(form.stopLossPct) || form.stopLossPct <= 0)) next.stopLossPct = '止损比例必须大于 0。'
+  if (form.takeProfitEnabled && (!Number.isFinite(form.takeProfitPct) || form.takeProfitPct <= 0)) next.takeProfitPct = '止盈比例必须大于 0。'
+  if (!Number.isFinite(form.initialCash) || form.initialCash <= 0) next.initialCash = '初始资金必须大于 0。'
+  return next
+}
+
+function buildPayload(): PortfolioBacktestPayload {
+  return {
+    vipdoc_path: form.vipdocPath.trim(),
+    universe: form.universe,
+    universe_file: form.universe === 'custom' ? form.universeFile.trim() : null,
+    selected_signals: [...form.selectedSignals],
+    combine_mode: form.combineMode,
+    minimum_matches: form.combineMode === 'at_least' ? form.minimumMatches : null,
+    ranking_value: form.rankingValue,
+    rank_order: form.rankOrder,
+    max_positions: form.maxPositions,
+    rebalance_frequency: form.rebalanceFrequency,
+    formula_text: form.mode === 'custom' ? form.formulaText.trim() : null,
+    formula_parameters: form.mode === 'custom' ? { ...form.formulaParameters } : {},
+    sell_signal: form.sellSignal || null,
+    stop_loss_pct: form.stopLossEnabled ? form.stopLossPct / 100 : null,
+    take_profit_pct: form.takeProfitEnabled ? form.takeProfitPct / 100 : null,
+    sell_value: form.sellValue || null,
+    sell_value_operator: form.sellValue ? form.sellValueOperator : null,
+    sell_value_threshold: form.sellValue ? form.sellValueThreshold : null,
+    compare_left_value: form.compareLeftValue || null,
+    compare_operator: form.compareLeftValue ? form.compareOperator : null,
+    compare_right_value: form.compareLeftValue ? form.compareRightValue || null : null,
+    start_date: form.startDate || null,
+    end_date: form.endDate || null,
+    initial_cash: form.initialCash,
+    commission: form.commission,
+    min_commission: form.minCommission,
+    stamp_tax: form.stampTax,
+    slippage: form.slippage,
+    execution: form.execution,
+  }
+}
+
+function apiMessage(error: unknown): string {
+  if (error instanceof FormulaScreenApiError) return error.message
+  if (error instanceof Error && error.message) return error.message
+  return '组合回测失败，请检查后端服务、数据目录和配置后重试。'
+}
+
+async function submit(): Promise<void> {
+  errors.value = validate()
+  message.value = ''
+  if (Object.values(errors.value).some(Boolean)) return
+  loading.value = true
+  result.value = null
+  try {
+    const created = await createPortfolioBacktest(buildPayload())
+    job.value = {
+      job_id: created.job_id,
+      status: 'queued',
+      progress: 0,
+      total_candidates: 0,
+      total_scanned: 0,
+      errors: 0,
+      error: null,
+      result: null,
+    }
+    for (;;) {
+      const state = await getPortfolioBacktest(created.job_id)
+      job.value = state
+      if (state.status === 'completed') {
+        result.value = await getPortfolioBacktestResults(created.job_id)
+        message.value = `组合回测完成：${result.value.trades.length} 笔成交，区间 ${result.value.start_date} 至 ${result.value.end_date}。`
+        return
+      }
+      if (state.status === 'failed') throw new Error(state.error ?? '组合回测任务失败')
+      await new Promise((resolve) => window.setTimeout(resolve, 220))
+    }
+  } catch (error) {
+    message.value = apiMessage(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+function formatPercent(value: number | null | undefined): string {
+  return value === null || value === undefined ? '—' : `${(value * 100).toFixed(2)}%`
+}
+
+function formatNumber(value: number | null | undefined, digits = 2): string {
+  return value === null || value === undefined ? '—' : value.toFixed(digits)
+}
+
+function formatMoney(value: number | null | undefined): string {
+  return value === null || value === undefined ? '—' : `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function valueName(id: string): string {
+  return availableValues.value.find((value) => value.id === id)?.display_name ?? id
+}
+
+function performanceValue(key: string): number | null {
+  return result.value?.performance[key] ?? null
+}
+
+function downloadResult(): void {
+  if (!result.value) return
+  const url = URL.createObjectURL(new Blob([JSON.stringify(result.value, null, 2)], { type: 'application/json' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'portfolio-backtest.json'
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+onMounted(async () => {
+  try {
+    metadata.value = await fetchMetadata()
+    form.vipdocPath = metadata.value.default_vipdoc_path ?? '/data/vipdoc'
+    resetPresetDefaults()
+  } catch (error) {
+    message.value = apiMessage(error)
+  }
+})
+
+watch(() => form.formulaText, (value) => {
+  if (form.mode !== 'custom' || customMetadata.value === null) return
+  if (value.trim() === parsedFormulaText.value) return
+  customMetadata.value = null
+  parsedFormulaText.value = ''
+  form.selectedSignals = []
+  form.sellSignal = ''
+  form.rankingValue = ''
+  customParseError.value = '公式已修改，请重新解析。'
+})
+</script>
+
+<template>
+  <div class="screen-page portfolio-page" data-testid="portfolio-backtest-page">
+    <header class="topbar">
+      <a class="brand" href="/formula-screen" aria-label="Easy TDX 选股台首页">
+        <span class="brand-mark">E</span>
+        <span><strong>Easy TDX</strong><small>选股台</small></span>
+      </a>
+      <nav aria-label="主导航">
+        <a class="nav-link" href="/formula-screen">公式选股</a>
+        <a class="nav-link" href="/backtest">单股回测</a>
+        <a class="nav-link active" href="/portfolio-backtest" aria-current="page">组合回测</a>
+      </nav>
+      <div class="topbar-status"><span class="status-dot" aria-hidden="true"></span> 本地数据模式</div>
+    </header>
+
+    <main class="content-shell">
+      <section class="page-intro">
+        <div>
+          <p class="eyebrow">RANKED PORTFOLIO / DAILY</p>
+          <h1>动态组合回测</h1>
+          <p class="intro-copy">从公式选股池中按指标排名买入，卖出后自动用排名靠前的候选补回空出的槽位。</p>
+        </div>
+        <div class="intro-note"><span class="note-label">默认流程</span><strong>收盘信号 · 次日成交</strong><small>固定槽位 · 每槽等额 · 支持止盈止损与指标卖出</small></div>
+      </section>
+
+      <div v-if="message" class="notice" :class="{ error: !message.includes('完成') }" role="alert" data-testid="portfolio-message">{{ message }}</div>
+
+      <div class="workspace-grid portfolio-grid">
+        <form class="config-panel panel portfolio-config" data-testid="portfolio-config" @submit.prevent="submit">
+          <div class="panel-heading">
+            <div><span class="section-kicker">01 / CONFIGURE</span><h2>组合配置</h2></div>
+            <span class="required-hint">* 必填</span>
+          </div>
+
+          <div class="formula-mode-tabs" role="tablist" aria-label="公式来源">
+            <button type="button" :class="{ active: form.mode === 'preset' }" data-testid="portfolio-mode-preset" role="tab" :aria-selected="form.mode === 'preset'" @click="setMode('preset')">预置指标</button>
+            <button type="button" :class="{ active: form.mode === 'custom' }" data-testid="portfolio-mode-custom" role="tab" :aria-selected="form.mode === 'custom'" @click="setMode('custom')">自定义公式</button>
+          </div>
+
+          <fieldset v-if="form.mode === 'custom'" class="form-section custom-formula-section">
+            <legend>粘贴通达信公式</legend>
+            <textarea v-model="form.formulaText" data-testid="portfolio-formula" rows="7" spellcheck="false" placeholder="例如：买入:CROSS(C,MA(C,20)); 卖出:CROSS(MA(C,20),C); 排序:C/MA(C,20);"></textarea>
+            <button class="secondary-button" data-testid="portfolio-parse-formula" type="button" :disabled="customParseLoading" @click="parseCustomFormula">{{ customParseLoading ? '解析中…' : '解析公式' }}</button>
+            <p class="helper">参数使用 <code>名称:=数值</code>；命名条件是选股/卖出信号，命名数值可用于排序和指标卖出。</p>
+            <p v-if="customParseError" class="field-error">{{ customParseError }}</p>
+            <div v-if="customMetadata" class="custom-formula-meta"><span>{{ customMetadata.parameters.length }} 个参数</span><span>{{ customMetadata.signals.length }} 个信号</span><span>{{ customMetadata.values?.length ?? 0 }} 个指标输出</span></div>
+            <div v-if="customMetadata?.parameters.length" class="parameter-grid">
+              <div v-for="parameter in customMetadata.parameters" :key="parameter.name"><label :for="`portfolio-param-${parameter.name}`">{{ parameter.name }}</label><input :id="`portfolio-param-${parameter.name}`" v-model.number="form.formulaParameters[parameter.name]" :data-testid="`portfolio-param-${parameter.name}`" type="number" :min="parameter.minimum" :max="parameter.maximum" :step="parameter.step"></div>
+            </div>
+            <p v-if="errors.formulaText" class="field-error">{{ errors.formulaText }}</p>
+            <p v-if="errors.formulaParameters" class="field-error">{{ errors.formulaParameters }}</p>
+          </fieldset>
+
+          <fieldset class="form-section">
+            <legend>数据范围</legend>
+            <label for="portfolio-vipdoc-path">vipdoc 数据目录 <span class="required">*</span></label>
+            <input id="portfolio-vipdoc-path" v-model="form.vipdocPath" data-testid="portfolio-vipdoc-path" type="text" placeholder="/data/vipdoc" autocomplete="off">
+            <p class="helper">读取已经下载到本地的沪深 A 股日线，不会上传行情文件。</p>
+            <p v-if="errors.vipdocPath" class="field-error">{{ errors.vipdocPath }}</p>
+            <div class="compact-fields portfolio-fields-top">
+              <div><label for="portfolio-universe">股票范围</label><select id="portfolio-universe" v-model="form.universe" data-testid="portfolio-universe"><option value="all">沪深 A 股</option><option value="sh">仅上海</option><option value="sz">仅深圳</option><option value="custom">自定义列表</option></select></div>
+              <div><label for="portfolio-max-positions">持仓槽位</label><input id="portfolio-max-positions" v-model.number="form.maxPositions" data-testid="portfolio-max-positions" type="number" min="1" max="100" step="1"></div>
+            </div>
+            <div v-if="form.universe === 'custom'" class="portfolio-inline-field"><label for="portfolio-universe-file">股票列表文件</label><input id="portfolio-universe-file" v-model="form.universeFile" data-testid="portfolio-universe-file" type="text" placeholder="每行 SH 600000 或 SZ 000001"><p v-if="errors.universeFile" class="field-error">{{ errors.universeFile }}</p></div>
+            <p v-if="errors.maxPositions" class="field-error">{{ errors.maxPositions }}</p>
+          </fieldset>
+
+          <fieldset class="form-section signal-section">
+            <legend>选股条件 <span class="legend-count">已选 {{ form.selectedSignals.length }}</span></legend>
+            <div v-if="availableSignals.length === 0" class="inline-empty">请先解析公式，或等待预置指标加载。</div>
+            <div v-for="signal in availableSignals" :key="signal.id" class="signal-option">
+              <input :id="`portfolio-signal-${signal.id}`" :data-testid="`portfolio-signal-${signal.id}`" type="checkbox" :checked="form.selectedSignals.includes(signal.id)" @change="toggleSignal(signal.id, ($event.target as HTMLInputElement).checked)">
+              <span class="fake-checkbox" aria-hidden="true"></span>
+              <label class="signal-copy" :for="`portfolio-signal-${signal.id}`"><strong>{{ signal.display_name }}</strong><small>{{ signal.description }}</small></label>
+            </div>
+            <p v-if="errors.selectedSignals" class="field-error">{{ errors.selectedSignals }}</p>
+            <div class="compact-fields portfolio-fields-top">
+              <div><label for="portfolio-combine-mode">条件组合</label><select id="portfolio-combine-mode" v-model="form.combineMode" data-testid="portfolio-combine-mode"><option value="all">全部满足</option><option value="any">任一满足</option><option value="at_least">至少满足 N 个</option></select></div>
+              <div v-if="form.combineMode === 'at_least'"><label for="portfolio-minimum-matches">至少满足数量</label><input id="portfolio-minimum-matches" v-model.number="form.minimumMatches" data-testid="portfolio-minimum-matches" type="number" min="1" :max="Math.max(form.selectedSignals.length, 1)"></div>
+            </div>
+            <p v-if="errors.minimumMatches" class="field-error">{{ errors.minimumMatches }}</p>
+          </fieldset>
+
+          <fieldset class="form-section">
+            <legend>排名与刷新</legend>
+            <div><label for="portfolio-ranking-value">排序指标 <span class="required">*</span></label><select id="portfolio-ranking-value" v-model="form.rankingValue" data-testid="portfolio-ranking-value" :disabled="availableValues.length === 0"><option value="" disabled>请选择指标输出</option><option v-for="value in availableValues" :key="value.id" :value="value.id">{{ value.display_name }} · {{ value.id }}</option></select></div>
+            <p v-if="availableValues.length === 0" class="helper">当前公式没有可用的数值输出，请在公式中增加如 <code>排序:C/MA(C,20);</code> 的命名表达式。</p>
+            <p v-if="errors.rankingValue" class="field-error">{{ errors.rankingValue }}</p>
+            <div class="compact-fields portfolio-fields-top">
+              <div><label for="portfolio-rank-order">排序方向</label><select id="portfolio-rank-order" v-model="form.rankOrder" data-testid="portfolio-rank-order"><option value="desc">从高到低</option><option value="asc">从低到高</option></select></div>
+              <div><label for="portfolio-frequency">候选刷新</label><select id="portfolio-frequency" v-model="form.rebalanceFrequency" data-testid="portfolio-frequency"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option></select></div>
+            </div>
+            <p class="helper">刷新只负责发现新的候选；已有持仓不会因为排名变化被强制换仓，卖出后才释放槽位。</p>
+          </fieldset>
+
+          <fieldset class="form-section">
+            <legend>卖出规则 <span class="required">至少一项</span></legend>
+            <div><label for="portfolio-sell-signal">卖出信号（可选）</label><select id="portfolio-sell-signal" v-model="form.sellSignal" data-testid="portfolio-sell-signal" :disabled="availableSignals.length === 0"><option value="">不使用信号</option><option v-for="signal in availableSignals" :key="`sell-${signal.id}`" :value="signal.id">{{ signal.display_name }} · {{ signal.id }}</option></select></div>
+            <div class="rule-toggle"><label><input v-model="form.stopLossEnabled" data-testid="portfolio-stop-loss-enabled" type="checkbox"><span>止损</span></label><input v-model.number="form.stopLossPct" data-testid="portfolio-stop-loss" type="number" min="0.01" max="100" step="0.5" aria-label="止损百分比"><span>%</span></div>
+            <div class="rule-toggle"><label><input v-model="form.takeProfitEnabled" data-testid="portfolio-take-profit-enabled" type="checkbox"><span>止盈</span></label><input v-model.number="form.takeProfitPct" data-testid="portfolio-take-profit" type="number" min="0.01" max="1000" step="0.5" aria-label="止盈百分比"><span>%</span></div>
+            <div class="rule-row"><select v-model="form.sellValue" data-testid="portfolio-sell-value" :disabled="availableValues.length === 0"><option value="">不使用指标阈值</option><option v-for="value in availableValues" :key="`sell-value-${value.id}`" :value="value.id">{{ value.display_name }}</option></select><select v-model="form.sellValueOperator" data-testid="portfolio-sell-value-operator" aria-label="指标阈值比较方式"><option value="lte">≤</option><option value="gte">≥</option></select><input v-model.number="form.sellValueThreshold" data-testid="portfolio-sell-value-threshold" type="number" step="0.01" aria-label="指标阈值" placeholder="阈值"></div>
+            <div class="rule-row"><select v-model="form.compareLeftValue" data-testid="portfolio-compare-left" :disabled="availableValues.length === 0"><option value="">不使用指标比较</option><option v-for="value in availableValues" :key="`compare-left-${value.id}`" :value="value.id">{{ value.display_name }}</option></select><select v-model="form.compareOperator" data-testid="portfolio-compare-operator" aria-label="指标比较方式"><option value="lt">&lt;</option><option value="lte">≤</option><option value="gt">&gt;</option><option value="gte">≥</option></select><select v-model="form.compareRightValue" data-testid="portfolio-compare-right" :disabled="availableValues.length === 0"><option value="">选择右侧指标</option><option v-for="value in availableValues" :key="`compare-right-${value.id}`" :value="value.id">{{ value.display_name }}</option></select></div>
+            <p v-if="errors.sellRules" class="field-error">{{ errors.sellRules }}</p>
+            <p v-if="errors.stopLossPct" class="field-error">{{ errors.stopLossPct }}</p>
+            <p v-if="errors.takeProfitPct" class="field-error">{{ errors.takeProfitPct }}</p>
+            <p class="helper">多个卖出规则同时满足时合并原因；信号在收盘确认，默认下一根 K 线执行。</p>
+          </fieldset>
+
+          <button class="advanced-toggle" data-testid="portfolio-advanced-toggle" type="button" :aria-expanded="showAdvanced" @click="showAdvanced = !showAdvanced"><span>{{ showAdvanced ? '收起高级设置' : '高级设置' }}</span><small>日期 · 资金 · 费用</small></button>
+          <div v-if="showAdvanced" class="advanced-settings" data-testid="portfolio-advanced-settings">
+            <fieldset class="form-section compact-fields"><div><label for="portfolio-start">开始日期</label><input id="portfolio-start" v-model="form.startDate" data-testid="portfolio-start" type="date"></div><div><label for="portfolio-end">结束日期</label><input id="portfolio-end" v-model="form.endDate" data-testid="portfolio-end" type="date"></div></fieldset>
+            <p v-if="errors.endDate" class="field-error">{{ errors.endDate }}</p>
+            <fieldset class="form-section compact-fields"><div><label for="portfolio-initial-cash">初始资金</label><input id="portfolio-initial-cash" v-model.number="form.initialCash" data-testid="portfolio-initial-cash" type="number" min="1" step="10000"></div><div><label for="portfolio-execution">成交方式</label><select id="portfolio-execution" v-model="form.execution" data-testid="portfolio-execution"><option value="next_open">下一根开盘</option><option value="next_close">下一根收盘</option></select></div></fieldset>
+            <p v-if="errors.initialCash" class="field-error">{{ errors.initialCash }}</p>
+            <fieldset class="form-section compact-fields"><div><label for="portfolio-commission">佣金费率</label><input id="portfolio-commission" v-model.number="form.commission" data-testid="portfolio-commission" type="number" min="0" max="0.1" step="0.0001"></div><div><label for="portfolio-min-commission">最低佣金</label><input id="portfolio-min-commission" v-model.number="form.minCommission" data-testid="portfolio-min-commission" type="number" min="0" step="0.01"></div></fieldset>
+            <fieldset class="form-section compact-fields"><div><label for="portfolio-stamp-tax">印花税率</label><input id="portfolio-stamp-tax" v-model.number="form.stampTax" data-testid="portfolio-stamp-tax" type="number" min="0" max="0.1" step="0.0001"></div><div><label for="portfolio-slippage">每股滑点（元）</label><input id="portfolio-slippage" v-model.number="form.slippage" data-testid="portfolio-slippage" type="number" min="0" step="0.001"></div></fieldset>
+          </div>
+
+          <div class="action-stack"><button class="primary-button" data-testid="start-portfolio-backtest" type="button" :disabled="!canSubmit" @click="submit"><span v-if="loading" class="spinner" aria-hidden="true"></span>{{ loading ? '组合回测中…' : '开始组合回测' }}</button></div>
+          <p class="privacy-note">计算在本机完成；结果基于本地日线，不代表未来收益。</p>
+        </form>
+
+        <section class="results-panel panel" data-testid="portfolio-results" aria-live="polite">
+          <div class="panel-heading results-heading"><div><span class="section-kicker">02 / RESULTS</span><h2>组合结果</h2></div><button v-if="result" class="secondary-button export-backtest" type="button" data-testid="export-portfolio-backtest" @click="downloadResult">导出 JSON</button></div>
+          <div v-if="!result" class="empty-state" data-testid="portfolio-empty"><div class="empty-icon" aria-hidden="true">/</div><h3>{{ loading ? '正在运行动态组合回测…' : '还没有组合结果' }}</h3><p>{{ loading ? '正在逐股计算公式并模拟槽位补位，完成后显示净值与候选排名。' : '配置选股条件、排序指标和卖出规则后开始回测。' }}</p></div>
+          <template v-else>
+            <div class="backtest-summary"><span class="result-badge">{{ result.universe === 'all' ? '沪深 A 股' : result.universe.toUpperCase() }}</span><span>{{ result.start_date }} → {{ result.end_date }}</span><span>{{ result.bars }} 个交易日</span><span>{{ result.processed }} / {{ result.total_candidates }} 只股票已处理</span><span>槽位 {{ result.max_positions }}</span><span>排序：{{ valueName(result.ranking_value) }} · {{ result.rank_order === 'desc' ? '高到低' : '低到高' }}</span></div>
+            <div class="metrics-strip portfolio-metrics">
+              <div><span>总收益</span><strong :class="{ positive: (performanceValue('total_return') ?? 0) >= 0, negative: (performanceValue('total_return') ?? 0) < 0 }" data-testid="portfolio-total-return">{{ formatPercent(performanceValue('total_return')) }}</strong></div>
+              <div><span>最大回撤</span><strong class="negative">{{ formatPercent(performanceValue('max_drawdown')) }}</strong></div>
+              <div><span>夏普</span><strong>{{ formatNumber(performanceValue('sharpe')) }}</strong></div>
+              <div><span>成交笔数</span><strong>{{ formatNumber(performanceValue('total_trades'), 0) }}</strong></div>
+              <div><span>胜率</span><strong>{{ formatPercent(performanceValue('win_rate')) }}</strong></div>
+              <div><span>期末资产</span><strong>{{ formatMoney(performanceValue('end_value')) }}</strong></div>
+            </div>
+            <div class="progress-track portfolio-progress" aria-label="组合数据处理进度"><span :style="{ width: `${Math.round((job?.progress ?? 1) * 100)}%` }"></span></div>
+
+            <section class="chart-card" aria-labelledby="portfolio-equity-title"><div class="chart-heading"><div><span class="section-kicker">EQUITY CURVE</span><h3 id="portfolio-equity-title">组合资金曲线</h3></div><span class="chart-legend"><i aria-hidden="true"></i>总资产</span></div><svg class="equity-chart" data-testid="portfolio-equity-chart" viewBox="0 0 800 240" role="img" :aria-label="chartSummary"><polyline :points="chartPoints" fill="none" stroke="var(--accent)" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"></polyline></svg><p class="chart-summary">{{ chartSummary }}</p></section>
+
+            <section class="data-section"><div class="section-heading"><div><span class="section-kicker">CURRENT HOLDINGS</span><h3>最新持仓</h3></div><span>{{ latestState?.positions_count ?? 0 }} / {{ result.max_positions }} 个槽位</span></div><div v-if="!latestState?.holdings.length" class="inline-empty">回测结束时没有持仓。</div><div v-else class="table-wrap"><table data-testid="portfolio-holdings"><caption class="sr-only">组合最新持仓</caption><thead><tr><th>市场</th><th>代码</th><th>数量</th><th>成本</th><th>收盘</th><th>浮动盈亏</th></tr></thead><tbody><tr v-for="holding in latestState.holdings" :key="`${holding.market}-${holding.code}`"><td><span class="market-pill" :class="holding.market.toLowerCase()">{{ holding.market }}</span></td><td><strong class="code">{{ holding.code }}</strong></td><td>{{ formatNumber(holding.size, 0) }}</td><td>{{ formatMoney(holding.entry_price) }}</td><td>{{ formatMoney(holding.close) }}</td><td :class="{ positive: holding.unrealized_pnl >= 0, negative: holding.unrealized_pnl < 0 }">{{ formatMoney(holding.unrealized_pnl) }}</td></tr></tbody></table></div></section>
+
+            <section class="data-section"><div class="section-heading"><div><span class="section-kicker">TRADES</span><h3>成交记录</h3></div><span>最近 {{ recentTrades.length }} 笔</span></div><div v-if="!recentTrades.length" class="inline-empty">区间内没有形成可执行成交。</div><div v-else class="table-wrap"><table data-testid="portfolio-trades"><caption class="sr-only">组合成交记录</caption><thead><tr><th>成交日期</th><th>股票</th><th>方向</th><th>数量</th><th>价格</th><th>盈亏</th><th>原因</th></tr></thead><tbody><tr v-for="(trade, index) in recentTrades" :key="`${trade.date}-${trade.code}-${index}`"><td class="muted-code">{{ trade.date }}</td><td><span class="market-pill" :class="trade.market.toLowerCase()">{{ trade.market }}</span> <strong class="code">{{ trade.code }}</strong></td><td><span class="direction" :class="trade.direction.toLowerCase()">{{ trade.direction === 'BUY' ? '买入' : '卖出' }}</span></td><td>{{ formatNumber(trade.size, 0) }}</td><td>{{ formatMoney(trade.price) }}</td><td :class="{ positive: trade.pnl >= 0, negative: trade.pnl < 0 }">{{ formatMoney(trade.pnl) }}</td><td>{{ trade.reason }}</td></tr></tbody></table></div></section>
+
+            <section class="data-section"><div class="section-heading"><div><span class="section-kicker">LATEST RANKING</span><h3>最近候选排名</h3></div><span>{{ latestRanking?.date ?? '—' }}</span></div><div v-if="!latestRanking?.candidates.length" class="inline-empty">没有可展示的排名候选。</div><div v-else class="table-wrap"><table data-testid="portfolio-ranking"><caption class="sr-only">最近候选排名</caption><thead><tr><th>排名</th><th>股票</th><th>指标值</th><th>动作</th></tr></thead><tbody><tr v-for="candidate in latestRanking.candidates" :key="`${candidate.market}-${candidate.code}`"><td class="muted-code">{{ candidate.rank }}</td><td><span class="market-pill" :class="candidate.market.toLowerCase()">{{ candidate.market }}</span> <strong class="code">{{ candidate.code }}</strong></td><td>{{ formatNumber(candidate.score, 4) }}</td><td><span class="result-badge" v-if="candidate.selected">进入候选槽位</span><span class="muted-code" v-else>等待补位</span></td></tr></tbody></table></div></section>
+
+            <section class="data-section"><div class="section-heading"><div><span class="section-kicker">RECENT EQUITY</span><h3>最近净值</h3></div><span>最近 {{ sampledEquity.length }} 日</span></div><div class="table-wrap"><table data-testid="portfolio-equity-table"><caption class="sr-only">组合最近资金曲线数据</caption><thead><tr><th>日期</th><th>现金</th><th>持仓市值</th><th>总资产</th><th>持仓数</th><th>回撤</th></tr></thead><tbody><tr v-for="point in sampledEquity" :key="point.date"><td class="muted-code">{{ point.date }}</td><td>{{ formatMoney(point.cash) }}</td><td>{{ formatMoney(point.position_value) }}</td><td><strong>{{ formatMoney(point.total) }}</strong></td><td>{{ point.positions_count }}</td><td>{{ formatPercent(point.drawdown_pct) }}</td></tr></tbody></table></div></section>
+            <div v-if="result.failure_reasons && Object.keys(result.failure_reasons).length" class="failure-summary"><strong>失败摘要</strong><span v-for="(count, reason) in result.failure_reasons" :key="reason">{{ reason }} · {{ count }}</span></div>
+            <p v-if="result.diagnostic" class="diagnostic" data-testid="portfolio-diagnostic">{{ result.diagnostic }}</p>
+          </template>
+        </section>
+      </div>
+    </main>
+  </div>
+</template>

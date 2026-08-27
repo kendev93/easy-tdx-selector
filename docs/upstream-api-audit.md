@@ -69,6 +69,8 @@ vipdoc/{sh,sz}/lday/{exchange}{code}.day
 
 上游已有 FastAPI 路由、`easy-tdx` CLI 和一个用于回测的进程内任务执行器。它们分别属于上游应用层；本项目的公式任务需要另一套结果字段和本地公式 registry，所以只在本项目内部提供轻量任务执行器，并不让业务代码依赖上游 `easy_tdx.web.*` 内部模块。本项目的 `EasyTdxMarketSync` 已使用上游在线 `get_security_list_all()`/`get_security_bars()` 加上 `.day` 写入 API；公式选股仍只消费本地已经完成的日线。公式回测使用公开的 `BacktestEngine`、`Strategy` 和 `BacktestResult`，将本项目公式输出转换为逐日买卖信号，不调用上游私有回测接口。
 
+动态组合回测由本项目 `selector_app/portfolio_backtest/service.py` 自己实现候选筛选、指标排序、固定槽位和卖出后补位；上游 `PortfolioBacktestEngine` 只支持固定股票列表的独立回测，无法表达本项目需要的动态候选轮换，因此没有把它误用成组合调仓接口。组合绩效仍复用上游公开 `PerformanceAnalyzer`，交易执行规则（下一根开盘/收盘、100 股整数、费用和滑点）由本项目服务明确模拟。
+
 ## 6. 本项目上游适配器和内部实现边界
 
 行情数据上游集成边界是 `selector_app/adapters/easy_tdx_adapter.py`，目前调用：
@@ -82,8 +84,11 @@ vipdoc/{sh,sz}/lday/{exchange}{code}.day
 - `easy_tdx.TdxClient`、`Market`、`KlineCategory`、`SecurityBar`；
 - `easy_tdx.MyTT`（由公式层调用，但仍是上游公开模块）。
 - `easy_tdx.backtest.BacktestEngine`、`Strategy`、`BacktestResult`（由公式回测服务调用的公开交易/绩效 API）。
+- `easy_tdx.backtest.performance.PerformanceAnalyzer`（由动态组合回测服务调用的公开绩效 API）。
 
 公式回测的交易执行边界位于 `selector_app/backtest/service.py`，只接收项目自己的规范化 DataFrame 和公式信号，并将上游回测结果转换成项目 API 的 JSON 记录。
+
+动态组合回测的边界位于 `selector_app/portfolio_backtest/service.py`：它只接收项目自己的规范化 DataFrame、公式信号和公式值，负责候选排序、持仓槽位生命周期与成交记录，再把组合净值交给上游公开绩效分析器。它不依赖上游 `easy_tdx.backtest.portfolio_engine` 的私有实现。
 
 没有使用上游的 `_detect_security_type`、协议 command、transport、`easy_tdx.web` 路由或 `easy_tdx.screen.scanner` 私有实现。上游的 `SecurityBar` 只在适配器中被转换和写入，不会进入公式或 Web 路由。
 

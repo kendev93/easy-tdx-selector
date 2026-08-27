@@ -88,6 +88,15 @@ class ParsedFormula:
     statements: tuple[_Statement, ...]
     minimum_bars: int
 
+    @property
+    def value_names(self) -> tuple[str, ...]:
+        """All named scalar/series outputs that can be used for ranking."""
+
+        return tuple(
+            [parameter.name for parameter in self.parameters]
+            + [statement.target for statement in self.statements if statement.target is not None]
+        )
+
     def metadata(self) -> dict[str, object]:
         return {
             "parameters": [
@@ -107,6 +116,14 @@ class ParsedFormula:
                     "description": signal.description,
                 }
                 for signal in self.signals
+            ],
+            "values": [
+                {
+                    "id": custom_output_id(name),
+                    "display_name": name,
+                    "description": f"{name} 的数值输出",
+                }
+                for name in self.value_names
             ],
             "minimum_bars": self.minimum_bars,
             "warnings": [],
@@ -391,6 +408,12 @@ def _validate_node(node: ast.AST) -> None:
 
 
 def _signal_id(name: str) -> str:
+    return custom_output_id(name)
+
+
+def custom_output_id(name: str) -> str:
+    """Return the stable API id for a named custom formula output."""
+
     suffix = name.lower() if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) else name
     return f"custom.{suffix}"
 
