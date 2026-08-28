@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.lock ./requirements.lock
 RUN python -m pip install --no-cache-dir -r requirements.lock
 
-COPY pyproject.toml README.md THIRD_PARTY_NOTICES.md ./
+COPY pyproject.toml README.md LICENSE THIRD_PARTY_NOTICES.md ./
 COPY selector_app ./selector_app
 RUN python -m pip install --no-cache-dir --no-deps .
 
