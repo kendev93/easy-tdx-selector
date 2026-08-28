@@ -31,4 +31,16 @@ describe('portfolio backtest API', () => {
       '/api/v1/portfolio-backtests/portfolio-1/results',
     ])
   })
+
+  it('uses the fallback message when the server omits error details', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: {} }), { status: 500 }),
+    )
+
+    await expect(getPortfolioBacktest('missing/job')).rejects.toMatchObject({
+      name: 'FormulaScreenApiError',
+      message: '请求失败，请检查组合回测配置后重试。',
+      status: 500,
+    })
+  })
 })

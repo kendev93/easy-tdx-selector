@@ -129,6 +129,22 @@ describe('BacktestPage', () => {
     expect(wrapper.get('[data-testid="backtest-message"]').text()).toContain('回测失败')
   })
 
+  it('validates advanced cash and fixed-size settings before submitting', async () => {
+    const wrapper = mount(BacktestPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="backtest-code"]').setValue('600000')
+    await wrapper.get('[data-testid="backtest-vipdoc-path"]').setValue('/data/vipdoc')
+    await wrapper.get('[data-testid="backtest-advanced-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="initial-cash"]').setValue(0)
+    await wrapper.get('[data-testid="position-mode"]').setValue('fixed')
+    await wrapper.get('[data-testid="fixed-size"]').setValue(50)
+    await wrapper.get('[data-testid="backtest-config"]').trigger('submit')
+
+    expect(wrapper.text()).toContain('初始资金必须大于 0')
+    expect(wrapper.text()).toContain('固定股数必须是 100 的整数倍')
+    expect(backtestApi.createBacktest).not.toHaveBeenCalled()
+  })
+
   it('supports fixed-size orders and exports a sparse result safely', async () => {
     vi.mocked(backtestApi.getBacktestResults).mockResolvedValueOnce({
       market: 'SH', code: '600000', bars: 1, start_date: '2024-01-02', end_date: '2024-01-02',

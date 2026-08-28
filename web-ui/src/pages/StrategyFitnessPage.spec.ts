@@ -6,6 +6,7 @@ import StrategyFitnessPage from './StrategyFitnessPage.vue'
 
 import * as fitnessApi from '../api/strategyFitness'
 import * as formulaApi from '../api/formulaScreen'
+import { FormulaScreenApiError } from '../api/formulaScreen'
 
 vi.mock('../api/formulaScreen', async () => {
   const actual = await vi.importActual<typeof import('../api/formulaScreen')>('../api/formulaScreen')
@@ -116,5 +117,118 @@ describe('StrategyFitnessPage', () => {
     await wrapper.get('[data-testid="fitness-config"]').trigger('submit')
     expect(wrapper.text()).toContain('请选择指标比较的右侧指标')
     expect(fitnessApi.createStrategyFitness).not.toHaveBeenCalled()
+  })
+
+  it('shows a metadata loading error from the API', async () => {
+    vi.mocked(formulaApi.fetchMetadata).mockRejectedValueOnce(new FormulaScreenApiError('元数据服务不可用', 503))
+    const wrapper = mount(StrategyFitnessPage)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="fitness-message"]').text()).toContain('元数据服务不可用')
+  })
+
+  it('handles empty and failed custom formula parsing before returning to presets', async () => {
+    const wrapper = mount(StrategyFitnessPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="fitness-mode-custom"]').trigger('click')
+
+    await wrapper.get('[data-testid="fitness-parse-formula"]').trigger('click')
+    expect(wrapper.text()).toContain('请输入通达信公式后再解析')
+
+    vi.mocked(formulaApi.parseFormula).mockRejectedValueOnce(new Error('unsupported formula'))
+    await wrapper.get('[data-testid="fitness-formula"]').setValue('BAD:UNKNOWN(C);')
+    await wrapper.get('[data-testid="fitness-parse-formula"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('公式解析失败，请检查语法和函数是否受支持')
+
+    vi.mocked(formulaApi.parseFormula).mockRejectedValueOnce(new FormulaScreenApiError('公式被拒绝', 422))
+    await wrapper.get('[data-testid="fitness-formula"]').setValue('BAD:UNKNOWN(D);')
+    await wrapper.get('[data-testid="fitness-parse-formula"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('公式被拒绝')
+
+    await wrapper.get('[data-testid="fitness-mode-preset"]').trigger('click')
+    expect((wrapper.get('[data-testid="fitness-ranking-value"]').element as HTMLSelectElement).value).toBe('indicator_three.varo7')
+  })
+
+  it('reports failed assessment jobs and request errors', async () => {
+    vi.mocked(fitnessApi.getStrategyFitness).mockResolvedValueOnce({
+      job_id: 'fitness-1', status: 'failed', progress: 1, total_candidates: 2, total_scanned: 0,
+      errors: 1, error: null, result: null,
+    })
+    const wrapper = mount(StrategyFitnessPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="start-fitness"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="fitness-message"]').text()).toContain('策略适配性评估任务失败')
+
+    vi.mocked(fitnessApi.createStrategyFitness).mockRejectedValueOnce(new FormulaScreenApiError('服务拒绝任务', 422))
+    await wrapper.get('[data-testid="start-fitness"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="fitness-message"]').text()).toContain('服务拒绝任务')
+  })
+
+  it('renders an empty report, failure summary, and export action', async () => {
+    const emptyReport: StrategyFitnessReport = {
+      ...report,
+      total_candidates: 1,
+      processed: 0,
+      skipped: 1,
+      errors: 1,
+      results: [],
+      failure_reasons: { 数据不足: 1 },
+      diagnostic: '没有股票完成三段评估',
+    }
+    vi.mocked(fitnessApi.getStrategyFitnessResults).mockResolvedValueOnce(emptyReport)
+    const wrapper = mount(StrategyFitnessPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="start-fitness"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('没有股票完成三段适配性评估')
+    expect(wrapper.text()).toContain('数据不足')
+    expect(wrapper.get('[data-testid="fitness-diagnostic"]').text()).toContain('没有股票完成三段评估')
+
+    Object.defineProperty(URL, 'createObjectURL', { value: vi.fn().mockReturnValue('blob:fitness'), configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    await wrapper.get('[data-testid="export-fitness"]').trigger('click')
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+    clickSpy.mockRestore()
+  })
+
+  it('validates split, data, trade, and sell-rule inputs', async () => {
+    const wrapper = mount(StrategyFitnessPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="fitness-universe"]').setValue('custom')
+    await wrapper.get('[data-testid="fitness-ranking-value"]').setValue('')
+    await wrapper.get('[data-testid="fitness-combine-mode"]').setValue('at_least')
+    await wrapper.get('[data-testid="fitness-minimum-matches"]').setValue(0)
+    await wrapper.get('[data-testid="fitness-vipdoc-path"]').setValue('')
+    await wrapper.get('[data-testid="fitness-start"]').setValue('2024-02-01')
+    await wrapper.get('[data-testid="fitness-end"]').setValue('2024-01-01')
+    await wrapper.get('[data-testid="fitness-train-ratio"]').setValue(0)
+    await wrapper.get('[data-testid="fitness-validation-ratio"]').setValue(0)
+    await wrapper.get('[data-testid="fitness-min-trades"]').setValue(0)
+    await wrapper.get('[data-testid="fitness-max-drawdown"]').setValue(101)
+    await wrapper.get('[data-testid="fitness-stop-loss"]').setValue(0)
+    await wrapper.get('[data-testid="fitness-advanced-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="fitness-initial-cash"]').setValue(0)
+    await wrapper.get('[data-testid="fitness-config"]').trigger('submit')
+
+    expect(wrapper.text()).toContain('请输入自定义股票列表文件')
+    expect(wrapper.text()).toContain('请选择用于记录策略上下文的指标输出')
+    expect(wrapper.text()).toContain('训练比例必须大于 0')
+    expect(wrapper.text()).toContain('验证比例必须大于 0')
+    expect(wrapper.text()).toContain('最少成交笔数必须是正整数')
+    expect(wrapper.text()).toContain('最大回撤阈值必须在 0 到 100% 之间')
+    expect(wrapper.text()).toContain('止损比例必须大于 0')
+    expect(wrapper.text()).toContain('初始资金必须大于 0')
+
+    await wrapper.get('[data-testid="fitness-stop-loss-enabled"]').setValue(false)
+    await wrapper.get('[data-testid="fitness-sell-signal"]').setValue('')
+    await wrapper.get('[data-testid="fitness-config"]').trigger('submit')
+    expect(wrapper.text()).toContain('至少配置一个卖出规则')
   })
 })

@@ -26,4 +26,16 @@ describe('strategy fitness API', () => {
       '/api/v1/strategy-fitness/fitness-1/results',
     ])
   })
+
+  it('uses the fallback message when the server omits error details', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: {} }), { status: 500 }),
+    )
+
+    await expect(getStrategyFitness('missing/job')).rejects.toMatchObject({
+      name: 'FormulaScreenApiError',
+      message: '请求失败，请检查策略适配性配置后重试。',
+      status: 500,
+    })
+  })
 })

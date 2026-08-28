@@ -14,8 +14,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements.lock
-      - run: python -m pip install "mypy>=1.9,<2" "pytest>=8,<10" "pytest-cov>=5,<8" "ruff>=0.4,<1"
-      - run: python -m pip install -e . --no-deps
+      - run: python -m pip install -e ".[dev]"
       - run: pytest --cov=selector_app --cov-report=term-missing
       - run: ruff format --check selector_app tests
       - run: ruff check selector_app tests

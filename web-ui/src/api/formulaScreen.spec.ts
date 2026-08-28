@@ -47,6 +47,16 @@ describe('formula screen API client', () => {
     } satisfies Partial<FormulaScreenApiError>))
   })
 
+  it('uses the fallback message when the server omits error details', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: {} }), { status: 503 }),
+    ))
+
+    await expect(fetchMetadata()).rejects.toMatchObject({
+      name: 'FormulaScreenApiError', message: '请求失败，请检查配置后重试。', status: 503,
+    })
+  })
+
   it('creates and polls a market sync job', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'sync-1', status: 'queued' } }), { status: 202 }))

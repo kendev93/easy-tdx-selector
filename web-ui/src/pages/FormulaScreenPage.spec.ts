@@ -25,7 +25,10 @@ const metadata: FormulaScreenMetadata = {
     { value: 'all', label: '全部满足 AND' }, { value: 'any', label: '任一满足 OR' }, { value: 'at_least', label: '至少满足 N 个' },
   ],
   supported_markets: ['SH', 'SZ'],
-  supported_universe: [{ value: 'all', label: '沪深全部 A 股' }],
+  supported_universe: [
+    { value: 'all', label: '沪深全部 A 股' },
+    { value: 'custom', label: '自定义股票列表' },
+  ],
   periods: [{ value: 'daily', label: '日线' }],
   data_directory_help: '本地目录',
   default_vipdoc_path: '/data/vipdoc',
@@ -53,7 +56,7 @@ describe('FormulaScreenPage', () => {
       total_signals: 2, errors: 0, skipped: 0, error: null,
     })
     vi.mocked(api.getResults).mockResolvedValue({
-      results: [{ market: 'SH', code: '600000', signal_date: 20260824, last_close: 12.35, matched_signals: ['indicator_three.accumulation_zone'], match_count: 1, indicator_values: { 'indicator_three.varo7': 2.2 } }],
+      results: [{ market: 'SH', code: '600000', signal_date: 20260824, last_close: 12.35, matched_signals: ['indicator_three.accumulation_zone'], match_count: 1, indicator_values: { 'indicator_three.varo7': 2.2, 'indicator_three.varo6': null } }],
       meta: { total_candidates: 2, total_scanned: 2, total_signals: 1, errors: 0, skipped: 0, failure_reasons: {}, skip_reasons: {} },
     })
   })
@@ -80,6 +83,19 @@ describe('FormulaScreenPage', () => {
     expect(wrapper.find('[data-testid="advanced-settings"]').exists()).toBe(false)
     await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
     expect(wrapper.get('[data-testid="advanced-settings"]').text()).toContain('市场范围')
+  })
+
+  it('validates a custom universe and an invalid minimum match count', async () => {
+    const wrapper = mount(FormulaScreenPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="universe"]').setValue('custom')
+    await wrapper.get('[data-testid="minimum-matches"]').setValue(3)
+    await wrapper.get('[data-testid="screen-config"]').trigger('submit')
+
+    expect(wrapper.text()).toContain('自定义范围需要提供股票列表文件')
+    expect(wrapper.text()).toContain('N 必须在 1 和已选择条件数量之间')
+    expect(api.createJob).not.toHaveBeenCalled()
   })
 
   it('submits selected signals, shows results, and keeps export controls', async () => {
@@ -188,5 +204,49 @@ describe('FormulaScreenPage', () => {
 
     expect(api.createSyncJob).toHaveBeenCalledWith({ vipdoc_path: '/data/vipdoc' })
     expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('写入 4 根')
+  })
+
+  it('surfaces parser, scan-job, and sync failures', async () => {
+    const wrapper = mount(FormulaScreenPage)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="mode-custom"]').trigger('click')
+    await wrapper.get('[data-testid="parse-formula"]').trigger('click')
+    expect(wrapper.text()).toContain('请输入通达信公式后再解析')
+
+    vi.mocked(api.parseFormula).mockRejectedValueOnce(new Error('unsupported'))
+    await wrapper.get('[data-testid="custom-formula"]').setValue('BAD:UNKNOWN(C);')
+    await wrapper.get('[data-testid="parse-formula"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('公式解析失败，请检查语法和函数是否受支持')
+
+    vi.mocked(api.parseFormula).mockRejectedValueOnce(new api.FormulaScreenApiError('公式被拒绝', 422))
+    await wrapper.get('[data-testid="custom-formula"]').setValue('BAD:UNKNOWN(D);')
+    await wrapper.get('[data-testid="parse-formula"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('公式被拒绝')
+
+    vi.mocked(api.getJob).mockResolvedValueOnce({
+      job_id: 'job-1', status: 'failed', progress: 1, total_candidates: 2, total_scanned: 0,
+      total_signals: 0, errors: 1, skipped: 0, error: null,
+    })
+    await wrapper.get('[data-testid="mode-preset"]').trigger('click')
+    await wrapper.get('[data-testid="vipdoc-path"]').setValue('/data/vipdoc')
+    await wrapper.get('[data-testid="signal-indicator_three.prepare_rally"]').setValue(true)
+    await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="minimum-matches"]').setValue(1)
+    await wrapper.get('[data-testid="screen-config"]').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('扫描失败')
+
+    vi.mocked(api.createSyncJob).mockRejectedValueOnce(new api.FormulaScreenApiError('行情服务拒绝', 503))
+    await wrapper.get('[data-testid="sync-market-data"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('行情服务拒绝')
+
+    vi.mocked(api.createSyncJob).mockRejectedValueOnce(new Error('sync down'))
+    await wrapper.get('[data-testid="sync-market-data"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('行情同步失败，请检查网络')
   })
 })
