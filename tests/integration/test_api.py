@@ -417,6 +417,10 @@ def test_portfolio_backtest_job_can_be_created_and_polled(tmp_path: Path) -> Non
                 "max_positions": 2,
                 "formula_text": "BUY:C>0; RANK:C;",
                 "stop_loss_pct": 0.05,
+                "fitness_filter_enabled": True,
+                "fitness_min_score": 60,
+                "fitness_min_trades": 3,
+                "fitness_max_drawdown": 0.4,
             },
         )
         assert response.status_code == 202

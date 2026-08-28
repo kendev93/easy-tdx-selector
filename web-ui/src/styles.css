@@ -184,6 +184,8 @@ tbody tr:hover td { background: rgba(22, 34, 58, 0.45); }
 .rule-toggle > span { color: var(--subtle); font-size: 11px; }
 .rule-row { display: grid; grid-template-columns: minmax(0, 1.35fr) 52px minmax(0, 1fr); gap: 7px; margin-top: 10px; }
 .rule-row > * { min-width: 0; }
+.filter-toggle { display: flex !important; align-items: center; gap: 8px; margin: 0 !important; color: var(--muted); cursor: pointer; }
+.filter-toggle input { accent-color: var(--accent); }
 .portfolio-metrics { grid-template-columns: repeat(6, 1fr); }
 .portfolio-progress { margin-bottom: 20px; }
 .portfolio-page .table-wrap table { min-width: 760px; }

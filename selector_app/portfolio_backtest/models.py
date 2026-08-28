@@ -52,6 +52,10 @@ class PortfolioBacktestConfig:
     min_commission: float = 5.0
     stamp_tax: float = 0.001
     slippage: float = 0.0
+    fitness_filter_enabled: bool = False
+    fitness_min_score: float = 75.0
+    fitness_min_trades: int = 5
+    fitness_max_drawdown: float = 0.3
 
     def __post_init__(self) -> None:
         if self.universe not in {"all", "sh", "sz", "custom"}:
@@ -77,6 +81,14 @@ class PortfolioBacktestConfig:
             raise ValueError("不支持的候选刷新频率")
         if self.execution not in {"next_open", "next_close"}:
             raise ValueError("不支持的成交方式")
+        if not isinstance(self.fitness_filter_enabled, bool):
+            raise ValueError("适配性过滤开关必须是布尔值")
+        if not math.isfinite(self.fitness_min_score) or not 0 <= self.fitness_min_score <= 100:
+            raise ValueError("适配性分数阈值必须在 0 到 100 之间")
+        if isinstance(self.fitness_min_trades, bool) or not 1 <= self.fitness_min_trades <= 10_000:
+            raise ValueError("适配性最少成交笔数必须在 1 到 10000 之间")
+        if not math.isfinite(self.fitness_max_drawdown) or not 0 <= self.fitness_max_drawdown <= 1:
+            raise ValueError("适配性最大回撤阈值必须在 0 到 1 之间")
         if self.sell_value_operator not in {None, "gte", "lte"}:
             raise ValueError("不支持的指标阈值比较方式")
         if self.compare_operator not in {None, "gt", "gte", "lt", "lte"}:
@@ -154,6 +166,10 @@ class PortfolioBacktestReport:
     max_positions: int
     ranking_value: str
     rank_order: str
+    fitness_filter_enabled: bool
+    fitness_min_score: float
+    fitness_min_trades: int
+    fitness_max_drawdown: float
     performance: Mapping[str, float | None]
     equity_curve: tuple[Mapping[str, PortfolioJsonValue], ...]
     trades: tuple[Mapping[str, PortfolioJsonValue], ...]
@@ -179,6 +195,10 @@ class PortfolioBacktestReport:
             "max_positions": self.max_positions,
             "ranking_value": self.ranking_value,
             "rank_order": self.rank_order,
+            "fitness_filter_enabled": self.fitness_filter_enabled,
+            "fitness_min_score": self.fitness_min_score,
+            "fitness_min_trades": self.fitness_min_trades,
+            "fitness_max_drawdown": self.fitness_max_drawdown,
             "performance": dict(self.performance),
             "equity_curve": [dict(row) for row in self.equity_curve],
             "trades": [dict(row) for row in self.trades],

@@ -143,6 +143,10 @@ describe('PortfolioBacktestPage', () => {
     await wrapper.get('[data-testid="portfolio-universe-file"]').setValue('/data/list.txt')
     await wrapper.get('[data-testid="portfolio-rank-order"]').setValue('asc')
     await wrapper.get('[data-testid="portfolio-frequency"]').setValue('weekly')
+    await wrapper.get('[data-testid="portfolio-fitness-enabled"]').setValue(true)
+    await wrapper.get('[data-testid="portfolio-fitness-score"]').setValue(60)
+    await wrapper.get('[data-testid="portfolio-fitness-trades"]').setValue(3)
+    await wrapper.get('[data-testid="portfolio-fitness-drawdown"]').setValue(40)
     await wrapper.get('[data-testid="portfolio-sell-signal"]').setValue('')
     await wrapper.get('[data-testid="portfolio-stop-loss-enabled"]').setValue(false)
     await wrapper.get('[data-testid="portfolio-take-profit-enabled"]').setValue(true)
@@ -173,6 +177,8 @@ describe('PortfolioBacktestPage', () => {
       sell_value_operator: 'gte', sell_value_threshold: -2,
       compare_left_value: 'indicator_three.varo7', compare_operator: 'gte',
       compare_right_value: 'indicator_three.varo6', execution: 'next_close',
+      fitness_filter_enabled: true, fitness_min_score: 60, fitness_min_trades: 3,
+      fitness_max_drawdown: 0.4,
     }))
     expect(wrapper.get('[data-testid="portfolio-message"]').text()).toContain('组合任务失败')
   })

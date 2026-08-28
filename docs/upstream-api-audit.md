@@ -90,6 +90,8 @@ vipdoc/{sh,sz}/lday/{exchange}{code}.day
 
 动态组合回测的边界位于 `selector_app/portfolio_backtest/service.py`：它只接收项目自己的规范化 DataFrame、公式信号和公式值，负责候选排序、持仓槽位生命周期与成交记录，再把组合净值交给上游公开绩效分析器。它不依赖上游 `easy_tdx.backtest.portfolio_engine` 的私有实现。
 
+组合适配性过滤的累计历史决策位于 `selector_app/strategy_fitness/rolling.py`，只消费本项目已经生成的交易和净值记录，并通过严格小于当前信号日期的边界查询避免未来数据。它不是上游 easy-tdx 的新增 API。
+
 策略适配性评估的边界位于 `selector_app/strategy_fitness/service.py`：它缓存项目自己的规范化日线，按共同日期切分窗口，并调用本项目组合服务的单股票入口复用买卖与费用语义；它只使用上游公开指标计算和绩效分析能力，不引入新的上游私有 API。
 
 没有使用上游的 `_detect_security_type`、协议 command、transport、`easy_tdx.web` 路由或 `easy_tdx.screen.scanner` 私有实现。上游的 `SecurityBar` 只在适配器中被转换和写入，不会进入公式或 Web 路由。

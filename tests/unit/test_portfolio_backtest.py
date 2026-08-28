@@ -241,3 +241,20 @@ def test_portfolio_rejects_unknown_sell_comparison_operators() -> None:
             compare_operator="unknown",
             compare_right_value="custom.rank",
         )
+
+
+def test_portfolio_fitness_filter_does_not_use_current_day_results() -> None:
+    report = PortfolioBacktestService(adapter=FakeAdapter()).run(
+        config(
+            fitness_filter_enabled=True,
+            fitness_min_score=0.0,
+            fitness_min_trades=1,
+            fitness_max_drawdown=1.0,
+        )
+    )
+
+    first_event = report.ranking_events[0]
+    assert first_event["date"] == "2024-01-01"
+    assert first_event["candidates"]
+    assert all(candidate["fitness_trades"] == 0 for candidate in first_event["candidates"])
+    assert all(candidate["selected"] is False for candidate in first_event["candidates"])

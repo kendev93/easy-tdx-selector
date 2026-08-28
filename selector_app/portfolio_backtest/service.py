@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, deque
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Protocol, cast
@@ -24,6 +24,11 @@ from selector_app.formulas.custom import (
 from selector_app.formulas.registry import FORMULA_REGISTRY, FormulaRegistry
 from selector_app.formulas.types import FormulaResult
 from selector_app.screening.engine import combine_matches
+from selector_app.strategy_fitness.rolling import (
+    RollingFitnessDecision,
+    RollingFitnessFilter,
+    RollingFitnessHistory,
+)
 
 from .models import (
     CompareOperator,
@@ -134,7 +139,8 @@ class PortfolioBacktestService:
         if not dates:
             return self._empty_report(config, len(refs), failure_reasons)
 
-        simulation = self._simulate(contexts, dates, config)
+        fitness_filter = self._build_fitness_filter(contexts, config)
+        simulation = self._simulate(contexts, dates, config, fitness_filter)
         report = self._build_report(
             config,
             dates,
@@ -168,6 +174,33 @@ class PortfolioBacktestService:
             raise ValueError("股票没有可用于回测的日期")
         simulation = self._simulate([context], dates, config)
         return self._build_report(config, dates, 1, 1, 0, {}, simulation)
+
+    def _build_fitness_filter(
+        self,
+        contexts: list[_StockSeries],
+        config: PortfolioBacktestConfig,
+    ) -> RollingFitnessFilter | None:
+        if not config.fitness_filter_enabled:
+            return None
+        history_config = replace(config, fitness_filter_enabled=False, max_positions=1)
+        histories: dict[str, RollingFitnessHistory] = {}
+        for context in contexts:
+            simulation = self._simulate(
+                [context],
+                [int(value) for value in context.dates],
+                history_config,
+                None,
+            )
+            histories[context.symbol] = RollingFitnessHistory.from_records(
+                trades=cast(list[dict[str, PortfolioJsonValue]], simulation["trades"]),
+                equity=cast(list[dict[str, PortfolioJsonValue]], simulation["equity"]),
+            )
+        return RollingFitnessFilter(
+            histories,
+            min_score=config.fitness_min_score,
+            min_trades=config.fitness_min_trades,
+            max_drawdown=config.fitness_max_drawdown,
+        )
 
     def _validate_outputs(
         self,
@@ -330,6 +363,7 @@ class PortfolioBacktestService:
         contexts: list[_StockSeries],
         dates: list[int],
         config: PortfolioBacktestConfig,
+        fitness_filter: RollingFitnessFilter | None = None,
     ) -> dict[str, object]:
         by_symbol = {context.symbol: context for context in contexts}
         positions: dict[str, _Position] = {}
@@ -407,6 +441,7 @@ class PortfolioBacktestService:
                     cash,
                     total_value,
                     config,
+                    fitness_filter,
                 )
                 ranking_events.append(event)
 
@@ -624,9 +659,11 @@ class PortfolioBacktestService:
         cash: float,
         total_value: float,
         config: PortfolioBacktestConfig,
+        fitness_filter: RollingFitnessFilter | None,
     ) -> tuple[list[_PendingBuy], dict[str, PortfolioJsonValue]]:
         excluded = set(positions) | set(pending_sells)
         candidates: list[tuple[float, _StockSeries]] = []
+        ranked_candidates: list[tuple[float, _StockSeries, RollingFitnessDecision | None]] = []
         for context in by_symbol.values():
             if context.symbol in excluded:
                 continue
@@ -639,8 +676,20 @@ class PortfolioBacktestService:
             if not combine_matches(matches, config.combine_mode, config.minimum_matches):
                 continue
             score = float(context.values[config.ranking_value][index])
-            if np.isfinite(score):
+            if not np.isfinite(score):
+                continue
+            decision = (
+                fitness_filter.decide(context.symbol, current_date) if fitness_filter else None
+            )
+            ranked_candidates.append((score, context, decision))
+            if decision is None or decision.eligible:
                 candidates.append((score, context))
+        ranked_candidates.sort(
+            key=lambda item: (
+                -item[0] if config.rank_order == "desc" else item[0],
+                item[1].symbol,
+            )
+        )
         candidates.sort(
             key=lambda item: (-item[0] if config.rank_order == "desc" else item[0], item[1].symbol)
         )
@@ -651,16 +700,27 @@ class PortfolioBacktestService:
             _PendingBuy(context.symbol, current_date, slot_budget) for _, context in selected
         ]
         event_candidates: list[dict[str, PortfolioJsonValue]] = []
-        for rank, (score, context) in enumerate(candidates[: max(slots, 10)], start=1):
-            event_candidates.append(
-                {
-                    "rank": rank,
-                    "market": context.market,
-                    "code": context.code,
-                    "score": score,
-                    "selected": rank <= slots,
-                }
-            )
+        selected_symbols = {context.symbol for _, context in selected}
+        for rank, (score, context, decision) in enumerate(
+            ranked_candidates[: max(slots, 10)], start=1
+        ):
+            candidate: dict[str, PortfolioJsonValue] = {
+                "rank": rank,
+                "market": context.market,
+                "code": context.code,
+                "score": score,
+                "selected": context.symbol in selected_symbols,
+            }
+            if decision is not None:
+                candidate.update(
+                    {
+                        "fitness_score": decision.score,
+                        "fitness_trades": decision.trades,
+                        "fitness_passed": decision.eligible,
+                        "excluded_reason": None if decision.eligible else decision.reason,
+                    }
+                )
+            event_candidates.append(candidate)
         return pending, {
             "date": _date_text(current_date),
             "slots_available": slots,
@@ -807,6 +867,10 @@ class PortfolioBacktestService:
             max_positions=config.max_positions,
             ranking_value=config.ranking_value,
             rank_order=config.rank_order,
+            fitness_filter_enabled=config.fitness_filter_enabled,
+            fitness_min_score=config.fitness_min_score,
+            fitness_min_trades=config.fitness_min_trades,
+            fitness_max_drawdown=config.fitness_max_drawdown,
             performance=performance,
             equity_curve=serialized_equity,
             trades=tuple(trades),
@@ -834,6 +898,10 @@ class PortfolioBacktestService:
             max_positions=config.max_positions,
             ranking_value=config.ranking_value,
             rank_order=config.rank_order,
+            fitness_filter_enabled=config.fitness_filter_enabled,
+            fitness_min_score=config.fitness_min_score,
+            fitness_min_trades=config.fitness_min_trades,
+            fitness_max_drawdown=config.fitness_max_drawdown,
             performance={},
             equity_curve=(),
             trades=(),
