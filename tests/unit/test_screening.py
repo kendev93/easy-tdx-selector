@@ -122,6 +122,20 @@ def test_engine_skips_insufficient_data_without_counting_as_error(tmp_path: Path
     assert report.skip_reasons["数据不足"] == 1
 
 
+def test_engine_reports_malformed_market_values_as_one_stock_error(tmp_path: Path) -> None:
+    ref = StockRef(market="SH", code="600000", path=tmp_path / "sh600000.day")
+    frame = make_bars()
+    frame.loc[0, "close"] = np.inf
+
+    report = ScreenEngine(FakeAdapter([ref], {ref.code: frame})).scan(
+        config("indicator_three.accumulation_zone")
+    )
+
+    assert report.results == ()
+    assert report.errors == 1
+    assert report.failure_reasons["行情数据包含非有限数值"] == 1
+
+
 def test_custom_universe_is_passed_to_adapter(tmp_path: Path) -> None:
     ref = StockRef(market="SH", code="600000", path=tmp_path / "sh600000.day")
     adapter = FakeAdapter([ref], {ref.code: make_bars()})

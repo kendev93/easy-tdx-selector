@@ -118,6 +118,14 @@ export function buildScanPayload(form: ScreenFormState): ScanPayload {
   }
 }
 
+export function filterKnownSignals(
+  selectedSignals: readonly string[],
+  availableSignalIds: readonly string[],
+): string[] {
+  const available = new Set(availableSignalIds)
+  return selectedSignals.filter((signalId) => available.has(signalId))
+}
+
 export function signalDisplayName(
   signalId: string,
   metadata: FormulaScreenMetadata | null,

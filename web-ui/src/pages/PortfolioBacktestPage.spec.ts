@@ -226,4 +226,14 @@ describe('PortfolioBacktestPage', () => {
     await wrapper.get('[data-testid="portfolio-config"]').trigger('submit')
     expect(wrapper.text()).toContain('至少选择一个选股条件')
   })
+
+  it('validates the right-hand indicator before submitting a comparison rule', async () => {
+    const wrapper = mount(PortfolioBacktestPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="portfolio-compare-left"]').setValue('indicator_three.varo7')
+    await wrapper.get('[data-testid="portfolio-config"]').trigger('submit')
+
+    expect(wrapper.text()).toContain('请选择指标比较的右侧指标')
+    expect(portfolioApi.createPortfolioBacktest).not.toHaveBeenCalled()
+  })
 })

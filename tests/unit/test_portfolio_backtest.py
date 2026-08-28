@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from selector_app.adapters.easy_tdx_adapter import StockRef
 from selector_app.portfolio_backtest.models import PortfolioBacktestConfig
@@ -51,6 +52,42 @@ class BrokenAdapter:
 
     def read_stock(self, ref: StockRef) -> pd.DataFrame:
         raise ValueError("读取失败")
+
+
+class SparseAdapter:
+    def __init__(self) -> None:
+        sparse = stock_frame([10, 10])
+        sparse["date"] = pd.to_datetime(["2024-01-01", "2024-01-03"])
+        self.frames = {
+            "600000": stock_frame([1, 1, 1]),
+            "600001": sparse,
+        }
+
+    def list_stock_refs(self, vipdoc_path, universe, universe_file=None):
+        return [
+            StockRef(market="SH", code=code, path=Path(vipdoc_path) / f"sh{code}.day")
+            for code in self.frames
+        ]
+
+    def read_stock(self, ref: StockRef) -> pd.DataFrame:
+        return self.frames[ref.code].copy(deep=True)
+
+
+class StaggeredAdapter:
+    def __init__(self) -> None:
+        first = stock_frame([20, 20, 20, 20])
+        second = stock_frame([10, 8, 8])
+        second["date"] = pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"])
+        self.frames = {"600000": first, "600001": second}
+
+    def list_stock_refs(self, vipdoc_path, universe, universe_file=None):
+        return [
+            StockRef(market="SH", code=code, path=Path(vipdoc_path) / f"sh{code}.day")
+            for code in self.frames
+        ]
+
+    def read_stock(self, ref: StockRef) -> pd.DataFrame:
+        return self.frames[ref.code].copy(deep=True)
 
 
 def config(**overrides: object) -> PortfolioBacktestConfig:
@@ -154,3 +191,53 @@ def test_empty_portfolio_report_counts_failed_stocks_as_skipped() -> None:
     assert report.processed == 0
     assert report.skipped == 1
     assert report.errors == 1
+
+
+def test_portfolio_does_not_carry_an_unfilled_buy_into_a_later_bar() -> None:
+    report = PortfolioBacktestService(adapter=SparseAdapter()).run(
+        config(
+            rebalance_frequency="monthly",
+            max_positions=1,
+            stop_loss_pct=None,
+            take_profit_pct=0.5,
+        )
+    )
+
+    assert report.trades == ()
+
+
+def test_portfolio_holding_days_are_paired_per_stock() -> None:
+    report = PortfolioBacktestService(adapter=StaggeredAdapter()).run(
+        config(
+            formula_text="BUY:C>0; RANK:C; LEVEL:C;",
+            ranking_value="custom.rank",
+            max_positions=2,
+            stop_loss_pct=None,
+            sell_value="custom.level",
+            sell_value_operator="lte",
+            sell_value_threshold=8.0,
+        )
+    )
+
+    assert [(trade["code"], trade["direction"]) for trade in report.trades] == [
+        ("600000", "BUY"),
+        ("600001", "BUY"),
+        ("600001", "SELL"),
+    ]
+    assert report.performance["avg_holding_days"] == 1.0
+
+
+def test_portfolio_rejects_unknown_sell_comparison_operators() -> None:
+    with pytest.raises(ValueError, match="指标阈值比较方式"):
+        config(
+            sell_value="custom.rank",
+            sell_value_operator="unknown",
+            sell_value_threshold=1.0,
+        )
+
+    with pytest.raises(ValueError, match="指标比较方式"):
+        config(
+            compare_left_value="custom.rank",
+            compare_operator="unknown",
+            compare_right_value="custom.rank",
+        )

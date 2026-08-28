@@ -77,6 +77,10 @@ class PortfolioBacktestConfig:
             raise ValueError("不支持的候选刷新频率")
         if self.execution not in {"next_open", "next_close"}:
             raise ValueError("不支持的成交方式")
+        if self.sell_value_operator not in {None, "gte", "lte"}:
+            raise ValueError("不支持的指标阈值比较方式")
+        if self.compare_operator not in {None, "gt", "gte", "lt", "lte"}:
+            raise ValueError("不支持的指标比较方式")
         if self.start_date is not None and self.end_date is not None:
             if self.start_date > self.end_date:
                 raise ValueError("回测开始日期不能晚于结束日期")

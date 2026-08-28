@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, MarketDataAdapter, StockRef
+from selector_app.formulas.common import validate_market_data
 from selector_app.formulas.custom import (
     ParsedFormula,
     evaluate_custom_formula,
@@ -58,6 +59,7 @@ def _evaluate_frame(
 ) -> ScanOutcome:
     if frame.empty:
         return ScanOutcome(skipped_reason="数据为空")
+    validate_market_data(frame)
 
     if parsed_formula is not None:
         formula_result = evaluate_custom_formula(
@@ -188,7 +190,10 @@ class ScreenEngine:
         # pandas formulas. Injected adapters (tests/embedding) use threads because
         # arbitrary adapter instances are not guaranteed to be pickleable.
         executor_type = (
-            ProcessPoolExecutor if isinstance(self._adapter, EasyTdxAdapter) else ThreadPoolExecutor
+            ProcessPoolExecutor
+            if isinstance(self._adapter, EasyTdxAdapter)
+            and self._registry is FORMULA_REGISTRY
+            else ThreadPoolExecutor
         )
         outcomes_by_index: dict[int, ScanOutcome] = {}
         with executor_type(max_workers=config.workers) as executor:

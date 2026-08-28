@@ -127,3 +127,19 @@ def test_formula_size_and_statement_limits_are_enforced() -> None:
         parse_formula("X:1;" + " " * 20_001)
     with pytest.raises(FormulaParseError, match="语句"):
         parse_formula(";".join(f"X{i}:1" for i in range(101)))
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "LEVEL:MA(C,0);",
+        "LEVEL:EMA(C,2.5);",
+        "LEVEL:LLV(C,-1);",
+        "LEVEL:COUNT(C>0,1.5);",
+    ],
+)
+def test_rolling_function_periods_must_be_positive_integers(formula: str) -> None:
+    parsed = parse_formula(formula)
+
+    with pytest.raises(ValueError, match="周期必须是正整数"):
+        evaluate_custom_formula(parsed, bars())

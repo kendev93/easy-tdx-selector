@@ -11,6 +11,7 @@ import pandas as pd
 from .types import FormulaResult
 
 REQUIRED_BAR_COLUMNS = ("open", "high", "low", "close", "volume", "amount")
+_PRICE_COLUMNS = ("open", "high", "low", "close")
 
 
 def safe_divide(numerator: object, denominator: object) -> np.ndarray:
@@ -38,6 +39,22 @@ def validate_formula_frame(frame: pd.DataFrame) -> None:
     missing = [name for name in REQUIRED_BAR_COLUMNS if name not in frame.columns]
     if missing:
         raise ValueError(f"行情数据缺少字段: {', '.join(missing)}")
+
+
+def validate_market_data(frame: pd.DataFrame) -> None:
+    """Reject malformed OHLCV values before they reach trading simulation."""
+
+    if "date" not in frame.columns:
+        raise ValueError("行情数据缺少字段: date")
+    validate_formula_frame(frame)
+    try:
+        numeric = frame[list(REQUIRED_BAR_COLUMNS)].to_numpy(dtype=float, copy=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("行情数据包含非数字字段") from exc
+    if not np.isfinite(numeric).all():
+        raise ValueError("行情数据包含非有限数值")
+    if (numeric[:, [REQUIRED_BAR_COLUMNS.index(name) for name in _PRICE_COLUMNS]] <= 0).any():
+        raise ValueError("行情数据包含非正价格")
 
 
 def dynamic_ref(values: np.ndarray, offsets: np.ndarray) -> np.ndarray:

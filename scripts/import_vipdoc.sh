@@ -19,6 +19,6 @@ docker run --rm \
   --mount "type=bind,src=$SOURCE_PATH,dst=/source,readonly" \
   --mount "type=volume,src=$VOLUME_NAME,dst=/data" \
   alpine:3.20 \
-  sh -c 'cp -a /source/. /data/'
+  sh -c 'cp -a /source/. /data/ && chown -R 10001:10001 /data'
 
 echo "vipdoc 已导入 Docker volume: $VOLUME_NAME"

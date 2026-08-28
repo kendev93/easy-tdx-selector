@@ -12,6 +12,7 @@ import pandas as pd
 from easy_tdx.backtest import BacktestEngine, BacktestResult, Strategy
 
 from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, MarketCode, StockRef
+from selector_app.formulas.common import validate_market_data
 from selector_app.formulas.custom import ParsedFormula, evaluate_custom_formula, parse_formula
 from selector_app.formulas.registry import FORMULA_REGISTRY, FormulaRegistry
 from selector_app.formulas.types import FormulaResult
@@ -106,11 +107,8 @@ class BacktestService:
 
     @staticmethod
     def _prepare_frame(frame: pd.DataFrame) -> pd.DataFrame:
-        required = {"date", "open", "high", "low", "close", "volume", "amount"}
-        missing = sorted(required - set(frame.columns))
-        if missing:
-            raise ValueError(f"行情数据缺少字段: {', '.join(missing)}")
         prepared = frame.copy(deep=True)
+        validate_market_data(prepared)
         prepared["date"] = pd.to_datetime(prepared["date"], errors="coerce")
         if prepared["date"].isna().any():
             raise ValueError("行情数据包含无效日期")

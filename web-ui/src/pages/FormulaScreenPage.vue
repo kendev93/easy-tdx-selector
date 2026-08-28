@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 
 import { createJob, createSyncJob, fetchMetadata, FormulaScreenApiError, getJob, getResults, getSyncJob, parseFormula } from '../api/formulaScreen'
 import type { CustomFormulaMetadata, FormulaScreenMetadata, JobState, MarketSyncJobState, ResultsMeta, ScreenFormState, ScreenResult } from '../types'
-import { buildScanPayload, DEFAULT_PRESET_SIGNALS, loadSavedForm, resultsToCsv, saveForm, signalDisplayName, validateScreenForm } from '../utils/formulaScreen'
+import { buildScanPayload, DEFAULT_PRESET_SIGNALS, filterKnownSignals, loadSavedForm, resultsToCsv, saveForm, signalDisplayName, validateScreenForm } from '../utils/formulaScreen'
 
 const metadata = ref<FormulaScreenMetadata | null>(null)
 const customMetadata = ref<CustomFormulaMetadata | null>(null)
@@ -196,6 +196,18 @@ onMounted(async () => {
     metadata.value = await fetchMetadata()
     if (!form.vipdocPath) {
       form.vipdocPath = metadata.value.default_vipdoc_path ?? '/data/vipdoc'
+    }
+    if (form.mode === 'preset') {
+      form.selectedSignals = filterKnownSignals(
+        form.selectedSignals,
+        presetSignals.value.map((signal) => signal.id),
+      )
+      if (form.combineMode === 'at_least' && form.selectedSignals.length > 0) {
+        form.minimumMatches = Math.min(
+          Math.max(form.minimumMatches ?? 1, 1),
+          form.selectedSignals.length,
+        )
+      }
     }
     if (form.mode === 'custom' && form.formulaText.trim()) {
       await parseCustomFormula()

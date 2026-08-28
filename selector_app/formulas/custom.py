@@ -509,6 +509,22 @@ def _scalar(value: object) -> float:
     return float(array)
 
 
+def _period(value: object, function_name: str, *, allow_zero: bool = False) -> int:
+    period = _scalar(value)
+    minimum = 0 if allow_zero else 1
+    if not math.isfinite(period) or not period.is_integer() or period < minimum:
+        qualifier = "非负整数" if allow_zero else "正整数"
+        raise ValueError(f"{function_name} 的周期必须是{qualifier}")
+    return int(period)
+
+
+def _positive_scalar(value: object, function_name: str) -> float:
+    period = _scalar(value)
+    if not math.isfinite(period) or period <= 0:
+        raise ValueError(f"{function_name} 的周期必须是正数")
+    return period
+
+
 def _evaluate_node(node: ast.AST, env: Mapping[str, object]) -> object:
     if isinstance(node, ast.Constant):
         return node.value
@@ -611,32 +627,34 @@ def _call(name: str, arguments: list[object]) -> object:
         source = np.asarray(arguments[0], dtype=float)
         period_value = np.asarray(arguments[1])
         if period_value.ndim == 0:
-            period = float(period_value)
-            if period < 0 or not period.is_integer():
-                raise ValueError("REF 的周期必须是非负整数")
-            return MyTT.REF(source, int(period))
+            return MyTT.REF(source, _period(period_value, "REF", allow_zero=True))
         periods = np.asarray(period_value, dtype=float)
         if len(periods) != len(source):
             raise ValueError("REF 的动态周期长度必须与行情数据一致")
         if np.isfinite(periods).any() and (periods[np.isfinite(periods)] < 0).any():
             raise ValueError("REF 的动态周期必须是非负数")
+        finite_periods = periods[np.isfinite(periods)]
+        if not np.equal(finite_periods, np.floor(finite_periods)).all():
+            raise ValueError("REF 的动态周期必须是整数")
         return dynamic_ref(source, periods)
     if name == "SMA":
         return MyTT.SMA(
-            arguments[0], _scalar(arguments[1]), _scalar(arguments[2]) if len(arguments) > 2 else 1
+            arguments[0],
+            _positive_scalar(arguments[1], "SMA"),
+            _scalar(arguments[2]) if len(arguments) > 2 else 1,
         )
     if name == "EMA":
-        return MyTT.EMA(arguments[0], _scalar(arguments[1]))
+        return MyTT.EMA(arguments[0], _period(arguments[1], "EMA"))
     if name == "MA":
-        return MyTT.MA(arguments[0], int(_scalar(arguments[1])))
+        return MyTT.MA(arguments[0], _period(arguments[1], "MA"))
     if name == "LLV":
-        return MyTT.LLV(arguments[0], int(_scalar(arguments[1])))
+        return MyTT.LLV(arguments[0], _period(arguments[1], "LLV"))
     if name == "HHV":
-        return MyTT.HHV(arguments[0], int(_scalar(arguments[1])))
+        return MyTT.HHV(arguments[0], _period(arguments[1], "HHV"))
     if name == "SUM":
-        return MyTT.SUM(arguments[0], int(_scalar(arguments[1])))
+        return MyTT.SUM(arguments[0], _period(arguments[1], "SUM"))
     if name == "COUNT":
-        return MyTT.COUNT(arguments[0], int(_scalar(arguments[1])))
+        return MyTT.COUNT(arguments[0], _period(arguments[1], "COUNT"))
     if name == "BARSLAST":
         return MyTT.BARSLAST(np.asarray(arguments[0], dtype=bool))
     if name == "CROSS":

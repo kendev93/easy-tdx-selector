@@ -5,6 +5,7 @@ import {
   DEFAULT_PRESET_SIGNALS,
   buildScanPayload,
   combineModeLabel,
+  filterKnownSignals,
   loadSavedForm,
   resultsToCsv,
   saveForm,
@@ -71,5 +72,12 @@ describe('formula screen form helpers', () => {
     }])
     expect(csv).toContain('"matched_signals"')
     expect(csv).toContain('600000')
+  })
+
+  it('filters persisted signal ids that are no longer in metadata', () => {
+    expect(filterKnownSignals(
+      ['removed.signal', 'indicator_three.prepare_rally', 'removed.again'],
+      ['indicator_three.prepare_rally'],
+    )).toEqual(['indicator_three.prepare_rally'])
   })
 })

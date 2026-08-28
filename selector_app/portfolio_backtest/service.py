@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date
@@ -14,6 +14,7 @@ import pandas as pd
 from easy_tdx.backtest.performance import PerformanceAnalyzer
 
 from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, StockRef
+from selector_app.formulas.common import validate_market_data
 from selector_app.formulas.custom import (
     ParsedFormula,
     custom_output_id,
@@ -248,11 +249,8 @@ class PortfolioBacktestService:
 
     @staticmethod
     def _prepare_frame(frame: pd.DataFrame) -> pd.DataFrame:
-        required = {"date", "open", "high", "low", "close", "volume", "amount"}
-        missing = sorted(required - set(frame.columns))
-        if missing:
-            raise ValueError(f"行情数据缺少字段: {', '.join(missing)}")
         prepared = frame.copy(deep=True)
+        validate_market_data(prepared)
         prepared["date"] = pd.to_datetime(prepared["date"], errors="coerce")
         if prepared["date"].isna().any():
             raise ValueError("行情数据包含无效日期")
@@ -348,6 +346,7 @@ class PortfolioBacktestService:
                 pending
                 for pending in pending_buys
                 if pending.symbol not in positions and pending.symbol not in pending_sells
+                and pending.signal_date >= current_date
             ]
             for context in contexts:
                 index = context.date_to_index.get(current_date)
@@ -764,6 +763,7 @@ class PortfolioBacktestService:
             performance = {
                 name: _finite_number(value) for name, value in analyzer.compute().items()
             }
+            performance["avg_holding_days"] = _average_holding_days(trades)
             diagnostic = analyzer.diagnostic
         serialized_equity = tuple(
             {
@@ -848,3 +848,44 @@ def _date_int(value: str) -> int:
 def _finite_number(value: object) -> float | None:
     number = float(cast(float, value))
     return number if np.isfinite(number) else None
+
+
+def _average_holding_days(trades: list[dict[str, PortfolioJsonValue]]) -> float:
+    """Pair buys and sells with FIFO queues kept separately for each stock."""
+
+    buy_queues: dict[str, deque[tuple[date, float]]] = {}
+    total_days = 0.0
+    total_size = 0.0
+    for trade in trades:
+        if bool(trade.get("rejected", False)):
+            continue
+        try:
+            timestamp = pd.Timestamp(trade["date"])
+            if pd.isna(timestamp):
+                continue
+            trade_date = timestamp.date()
+            size = float(cast(float, trade["size"]))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if size <= 0:
+            continue
+        symbol = f"{trade.get('market', '')}{trade.get('code', '')}"
+        queue = buy_queues.setdefault(symbol, deque())
+        if trade.get("direction") == "BUY":
+            queue.append((trade_date, size))
+            continue
+        if trade.get("direction") != "SELL":
+            continue
+        remaining = size
+        while remaining > 0 and queue:
+            buy_date, buy_size = queue[0]
+            consumed = min(remaining, buy_size)
+            total_days += max((trade_date - buy_date).days, 0) * consumed
+            total_size += consumed
+            remaining -= consumed
+            buy_size -= consumed
+            if buy_size <= 0:
+                queue.popleft()
+            else:
+                queue[0] = (buy_date, buy_size)
+    return total_days / total_size if total_size else 0.0

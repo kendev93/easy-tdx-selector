@@ -262,6 +262,12 @@ function validate(): Record<string, string> {
   if (!form.sellSignal && !form.stopLossEnabled && !form.takeProfitEnabled && !form.sellValue && !form.compareLeftValue) {
     next.sellRules = '至少配置一个卖出规则。'
   }
+  if (form.sellValue && !Number.isFinite(form.sellValueThreshold)) {
+    next.sellValue = '指标阈值必须是有限数字。'
+  }
+  if (form.compareLeftValue && !form.compareRightValue) {
+    next.compareRules = '请选择指标比较的右侧指标。'
+  }
   if (form.stopLossEnabled && (!Number.isFinite(form.stopLossPct) || form.stopLossPct <= 0)) next.stopLossPct = '止损比例必须大于 0。'
   if (form.takeProfitEnabled && (!Number.isFinite(form.takeProfitPct) || form.takeProfitPct <= 0)) next.takeProfitPct = '止盈比例必须大于 0。'
   if (!Number.isFinite(form.initialCash) || form.initialCash <= 0) next.initialCash = '初始资金必须大于 0。'
@@ -304,7 +310,6 @@ function buildPayload(): PortfolioBacktestPayload {
 
 function apiMessage(error: unknown): string {
   if (error instanceof FormulaScreenApiError) return error.message
-  if (error instanceof Error && error.message) return error.message
   return '组合回测失败，请检查后端服务、数据目录和配置后重试。'
 }
 
@@ -334,7 +339,10 @@ async function submit(): Promise<void> {
         message.value = `组合回测完成：${result.value.trades.length} 笔成交，区间 ${result.value.start_date} 至 ${result.value.end_date}。`
         return
       }
-      if (state.status === 'failed') throw new Error(state.error ?? '组合回测任务失败')
+      if (state.status === 'failed') {
+        message.value = state.error ?? '组合回测任务失败，请检查配置和服务状态后重试。'
+        return
+      }
       await new Promise((resolve) => window.setTimeout(resolve, 220))
     }
   } catch (error) {
@@ -499,6 +507,8 @@ watch(() => form.formulaText, (value) => {
             <div class="rule-row"><select v-model="form.sellValue" data-testid="portfolio-sell-value" :disabled="availableValues.length === 0"><option value="">不使用指标阈值</option><option v-for="value in availableValues" :key="`sell-value-${value.id}`" :value="value.id">{{ value.display_name }}</option></select><select v-model="form.sellValueOperator" data-testid="portfolio-sell-value-operator" aria-label="指标阈值比较方式"><option value="lte">≤</option><option value="gte">≥</option></select><input v-model.number="form.sellValueThreshold" data-testid="portfolio-sell-value-threshold" type="number" step="0.01" aria-label="指标阈值" placeholder="阈值"></div>
             <div class="rule-row"><select v-model="form.compareLeftValue" data-testid="portfolio-compare-left" :disabled="availableValues.length === 0"><option value="">不使用指标比较</option><option v-for="value in availableValues" :key="`compare-left-${value.id}`" :value="value.id">{{ value.display_name }}</option></select><select v-model="form.compareOperator" data-testid="portfolio-compare-operator" aria-label="指标比较方式"><option value="lt">&lt;</option><option value="lte">≤</option><option value="gt">&gt;</option><option value="gte">≥</option></select><select v-model="form.compareRightValue" data-testid="portfolio-compare-right" :disabled="availableValues.length === 0"><option value="">选择右侧指标</option><option v-for="value in availableValues" :key="`compare-right-${value.id}`" :value="value.id">{{ value.display_name }}</option></select></div>
             <p v-if="errors.sellRules" class="field-error">{{ errors.sellRules }}</p>
+            <p v-if="errors.sellValue" class="field-error">{{ errors.sellValue }}</p>
+            <p v-if="errors.compareRules" class="field-error">{{ errors.compareRules }}</p>
             <p v-if="errors.stopLossPct" class="field-error">{{ errors.stopLossPct }}</p>
             <p v-if="errors.takeProfitPct" class="field-error">{{ errors.takeProfitPct }}</p>
             <p class="helper">多个卖出规则同时满足时合并原因；信号在收盘确认，默认下一根 K 线执行。</p>
