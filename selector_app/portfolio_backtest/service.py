@@ -829,6 +829,7 @@ class PortfolioBacktestService:
                 "rejected",
             ],
         )
+        diagnostic: str | None
         if equity_frame.empty:
             performance: dict[str, float | None] = {}
             diagnostic = "没有可用于回测的组合净值数据"

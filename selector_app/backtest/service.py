@@ -161,7 +161,7 @@ class BacktestService:
         ]
         order_size = 0 if config.position_mode == "full" else cast(int, config.fixed_size)
 
-        class FormulaSignalStrategy(Strategy):  # type: ignore[misc]
+        class FormulaSignalStrategy(Strategy):  # type: ignore[misc, unused-ignore]
             def __init__(self) -> None:
                 super().__init__()
                 self._cursor = -1

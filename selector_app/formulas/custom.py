@@ -17,9 +17,8 @@ from typing import cast
 
 import numpy as np
 import pandas as pd
-from easy_tdx import MyTT
 
-from .common import REQUIRED_BAR_COLUMNS, dynamic_ref, safe_divide
+from .common import MYTT, REQUIRED_BAR_COLUMNS, dynamic_ref, safe_divide
 from .types import FormulaResult
 
 MAX_FORMULA_LENGTH = 20_000
@@ -493,7 +492,7 @@ def _broadcast(value: object, length: int) -> np.ndarray:
         return np.full(length, float(array), dtype=float)
     if len(array) != length:
         raise ValueError("公式表达式返回了错误长度的数组")
-    return cast(np.ndarray, np.asarray(array, dtype=float))
+    return np.asarray(array, dtype=float)
 
 
 def _signal_mask(value: np.ndarray) -> np.ndarray:
@@ -627,7 +626,7 @@ def _call(name: str, arguments: list[object]) -> object:
         source = np.asarray(arguments[0], dtype=float)
         period_value = np.asarray(arguments[1])
         if period_value.ndim == 0:
-            return MyTT.REF(source, _period(period_value, "REF", allow_zero=True))
+            return MYTT.REF(source, _period(period_value, "REF", allow_zero=True))
         periods = np.asarray(period_value, dtype=float)
         if len(periods) != len(source):
             raise ValueError("REF 的动态周期长度必须与行情数据一致")
@@ -638,27 +637,29 @@ def _call(name: str, arguments: list[object]) -> object:
             raise ValueError("REF 的动态周期必须是整数")
         return dynamic_ref(source, periods)
     if name == "SMA":
-        return MyTT.SMA(
-            arguments[0],
+        return MYTT.SMA(
+            np.asarray(arguments[0], dtype=float),
             _positive_scalar(arguments[1], "SMA"),
             _scalar(arguments[2]) if len(arguments) > 2 else 1,
         )
     if name == "EMA":
-        return MyTT.EMA(arguments[0], _period(arguments[1], "EMA"))
+        return MYTT.EMA(np.asarray(arguments[0], dtype=float), _period(arguments[1], "EMA"))
     if name == "MA":
-        return MyTT.MA(arguments[0], _period(arguments[1], "MA"))
+        return MYTT.MA(np.asarray(arguments[0], dtype=float), _period(arguments[1], "MA"))
     if name == "LLV":
-        return MyTT.LLV(arguments[0], _period(arguments[1], "LLV"))
+        return MYTT.LLV(np.asarray(arguments[0], dtype=float), _period(arguments[1], "LLV"))
     if name == "HHV":
-        return MyTT.HHV(arguments[0], _period(arguments[1], "HHV"))
+        return MYTT.HHV(np.asarray(arguments[0], dtype=float), _period(arguments[1], "HHV"))
     if name == "SUM":
-        return MyTT.SUM(arguments[0], _period(arguments[1], "SUM"))
+        return MYTT.SUM(np.asarray(arguments[0], dtype=float), _period(arguments[1], "SUM"))
     if name == "COUNT":
-        return MyTT.COUNT(arguments[0], _period(arguments[1], "COUNT"))
+        return MYTT.COUNT(np.asarray(arguments[0], dtype=float), _period(arguments[1], "COUNT"))
     if name == "BARSLAST":
-        return MyTT.BARSLAST(np.asarray(arguments[0], dtype=bool))
+        return MYTT.BARSLAST(np.asarray(arguments[0], dtype=bool))
     if name == "CROSS":
-        return MyTT.CROSS(arguments[0], arguments[1])
+        return MYTT.CROSS(
+            np.asarray(arguments[0], dtype=float), np.asarray(arguments[1], dtype=float)
+        )
     if name == "DRAWNULL":
         return np.nan
     raise FormulaParseError(f"公式调用了不支持的函数: {name}")

@@ -104,6 +104,12 @@ ClientFactory = Callable[[float], TdxMarketClient]
 ProgressCallback = Callable[[int, int], None]
 
 
+def _default_client(timeout: float) -> TdxMarketClient:
+    """Adapt easy-tdx's concrete client to the app-owned protocol."""
+
+    return cast(TdxMarketClient, TdxClient.from_best_host(timeout=timeout))
+
+
 class EasyTdxMarketSync:
     """Fetch completed daily bars and append them in TDX ``.day`` format."""
 
@@ -131,9 +137,7 @@ class EasyTdxMarketSync:
         unchanged_files = 0
         written_bars = 0
 
-        factory = self._client_factory or (
-            lambda timeout: TdxClient.from_best_host(timeout=timeout)
-        )
+        factory: ClientFactory = self._client_factory or _default_client
         with factory(config.timeout) as client:
             targets = self._list_targets(client, config.universe)
             total = len(targets)
@@ -238,7 +242,7 @@ class EasyTdxMarketSync:
                 price_coeff=_MARKET_PRICE_COEFFICIENT,
                 vol_coeff=_MARKET_VOLUME_COEFFICIENT,
             )
-        return cast(int, written)
+        return int(written)
 
     def _replace_last_bar(self, filepath: Path, bar: SecurityBar) -> int:
         """Replace a same-day provisional bar with the completed close."""
@@ -341,9 +345,7 @@ def _is_current_day_after_close(bar: SecurityBar, *, now: datetime) -> bool:
 
 
 def _bar_date_int(bar: SecurityBar) -> int:
-    return (
-        int(cast(int, bar.year)) * 10000 + int(cast(int, bar.month)) * 100 + int(cast(int, bar.day))
-    )
+    return int(bar.year) * 10000 + int(bar.month) * 100 + int(bar.day)
 
 
 def _as_int(value: object) -> int:

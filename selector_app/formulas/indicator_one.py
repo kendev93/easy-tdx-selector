@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from easy_tdx import MyTT
 
-from .common import build_formula_result, empty_formula_result, numeric_column
+from .common import MYTT, build_formula_result, empty_formula_result, numeric_column
 from .types import FormulaResult
 
 FORMULA_ID = "indicator_one"
@@ -31,31 +30,31 @@ def calculate_indicator_one(frame: pd.DataFrame) -> FormulaResult:
     open_ = numeric_column(frame, "open")
     close = numeric_column(frame, "close")
     high = numeric_column(frame, "high")
-    var1 = MyTT.REF((low + open_ + close + high) / 4, 1)
-    var2_numerator = MyTT.SMA(MyTT.ABS(low - var1), 13, 1)
-    var2_denominator = MyTT.SMA(MyTT.MAX(low - var1, 0), 10, 1)
+    var1 = MYTT.REF((low + open_ + close + high) / 4, 1)
+    var2_numerator = MYTT.SMA(MYTT.ABS(low - var1), 13, 1)
+    var2_denominator = MYTT.SMA(MYTT.MAX(low - var1, 0), 10, 1)
     var2 = np.divide(
         var2_numerator, var2_denominator, out=np.full(len(low), np.nan), where=var2_denominator != 0
     )
-    var3 = MyTT.EMA(var2, 10)
-    var4 = MyTT.LLV(low, 33)
-    var5 = MyTT.EMA(np.where(low <= var4, var3, 0), 3)
-    var5_previous = MyTT.REF(var5, 1)
+    var3 = MYTT.EMA(var2, 10)
+    var4 = MYTT.LLV(low, 33)
+    var5 = MYTT.EMA(np.where(low <= var4, var3, 0), 3)
+    var5_previous = MYTT.REF(var5, 1)
 
     # Preserve the source formula exactly: MIN(HIGH-VAR1, 0), not ABS(...).
-    var21_denominator_input = MyTT.MIN(high - var1, 0)
-    var21_numerator = MyTT.SMA(MyTT.ABS(high - var1), 13, 1)
-    var21_denominator = MyTT.SMA(var21_denominator_input, 10, 1)
+    var21_denominator_input = MYTT.MIN(high - var1, 0)
+    var21_numerator = MYTT.SMA(MYTT.ABS(high - var1), 13, 1)
+    var21_denominator = MYTT.SMA(var21_denominator_input, 10, 1)
     var21 = np.divide(
         var21_numerator,
         var21_denominator,
         out=np.full(len(high), np.nan),
         where=var21_denominator != 0,
     )
-    var31 = MyTT.EMA(var21, 10)
-    var41 = MyTT.HHV(high, 33)
-    var51 = MyTT.EMA(np.where(high >= var41, var31, 0), 3)
-    var51_previous = MyTT.REF(var51, 1)
+    var31 = MYTT.EMA(var21, 10)
+    var41 = MYTT.HHV(high, 33)
+    var51 = MYTT.EMA(np.where(high >= var41, var31, 0), 3)
+    var51_previous = MYTT.REF(var51, 1)
 
     signals = {
         # Signal ids retain the Chinese formula's named outputs in English.

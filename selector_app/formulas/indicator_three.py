@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from easy_tdx import MyTT
 
-from .common import build_formula_result, empty_formula_result, numeric_column, safe_divide
+from .common import MYTT, build_formula_result, empty_formula_result, numeric_column, safe_divide
 from .types import FormulaResult
 
 FORMULA_ID = "indicator_three"
@@ -32,19 +31,19 @@ def calculate_indicator_three(frame: pd.DataFrame) -> FormulaResult:
     close = numeric_column(frame, "close")
     n = 5
     stochastic_base = (
-        safe_divide(close - MyTT.LLV(low, n), MyTT.HHV(high, n) - MyTT.LLV(low, n)) * 100
+        safe_divide(close - MYTT.LLV(low, n), MYTT.HHV(high, n) - MYTT.LLV(low, n)) * 100
     )
-    sma_inner = MyTT.SMA(stochastic_base, 5, 1)
+    sma_inner = MYTT.SMA(stochastic_base, 5, 1)
     # The fractional 3.2 period is intentional and matches the source formula.
-    var1 = 4 * sma_inner - 3 * MyTT.SMA(sma_inner, 3.2, 1)
+    var1 = 4 * sma_inner - 3 * MYTT.SMA(sma_inner, 3.2, 1)
     var2 = np.full(len(close), 8.0)
 
-    varo5 = MyTT.LLV(low, 27)
-    varo6 = MyTT.HHV(high, 34)
-    varo7 = MyTT.EMA(safe_divide(close - varo5, varo6 - varo5) * 4, 4) * 25
+    varo5 = MYTT.LLV(low, 27)
+    varo6 = MYTT.HHV(high, 34)
+    varo7 = MYTT.EMA(safe_divide(close - varo5, varo6 - varo5) * 4, 4) * 25
 
     signals = {
-        "prepare_rally": MyTT.CROSS(var1, var2),
+        "prepare_rally": MYTT.CROSS(var1, var2),
         "suppress_main": var1 <= 8,
         "accumulation_zone": varo7 < 10,
         "begin_zone": var1 < 10,

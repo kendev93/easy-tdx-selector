@@ -3,15 +3,54 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import Protocol, cast
 
 import numpy as np
 import pandas as pd
+from easy_tdx import MyTT
 
 from .types import FormulaResult
 
 REQUIRED_BAR_COLUMNS = ("open", "high", "low", "close", "volume", "amount")
 _PRICE_COLUMNS = ("open", "high", "low", "close")
+
+
+class _MyTTApi(Protocol):
+    """Typed facade for the runtime MyTT API exposed by easy-tdx.
+
+    easy-tdx's runtime exposes more formula helpers than its public type
+    declarations.  Keep that mismatch at this adapter boundary instead of
+    weakening typing throughout the formula implementations.
+    """
+
+    def REF(self, values: np.ndarray, period: int) -> np.ndarray: ...
+
+    def SMA(self, values: np.ndarray, period: float, weight: float) -> np.ndarray: ...
+
+    def EMA(self, values: np.ndarray, period: int) -> np.ndarray: ...
+
+    def MA(self, values: np.ndarray, period: int) -> np.ndarray: ...
+
+    def LLV(self, values: np.ndarray, period: int) -> np.ndarray: ...
+
+    def HHV(self, values: np.ndarray, period: int) -> np.ndarray: ...
+
+    def SUM(self, values: np.ndarray, period: int) -> np.ndarray: ...
+
+    def COUNT(self, values: np.ndarray, period: int) -> np.ndarray: ...
+
+    def BARSLAST(self, values: np.ndarray) -> np.ndarray: ...
+
+    def CROSS(self, left: object, right: object) -> np.ndarray: ...
+
+    def ABS(self, values: object) -> np.ndarray: ...
+
+    def MAX(self, left: object, right: object) -> np.ndarray: ...
+
+    def MIN(self, left: object, right: object) -> np.ndarray: ...
+
+
+MYTT = cast(_MyTTApi, MyTT)
 
 
 def safe_divide(numerator: object, denominator: object) -> np.ndarray:
