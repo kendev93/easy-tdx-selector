@@ -17,6 +17,7 @@ from selector_app.portfolio_backtest.models import (
     PortfolioUniverse,
 )
 from selector_app.screening.models import ScanConfig
+from selector_app.strategy_fitness.models import StrategyFitnessConfig
 
 
 def validate_formula_signals(
@@ -319,4 +320,30 @@ class PortfolioBacktestRequest(BaseModel):
             stamp_tax=self.stamp_tax,
             slippage=self.slippage,
             execution=self.execution,
+        )
+
+
+class StrategyFitnessRequest(PortfolioBacktestRequest):
+    """Batch single-stock strategy suitability request."""
+
+    max_positions: Literal[1] = 1
+    rebalance_frequency: Literal["daily"] = "daily"
+    train_ratio: float = Field(default=0.6, gt=0, lt=1)
+    validation_ratio: float = Field(default=0.2, gt=0, lt=1)
+    min_trades: int = Field(default=5, ge=1, le=10_000)
+    max_test_drawdown: float = Field(default=0.3, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_fitness_split(self) -> StrategyFitnessRequest:
+        if self.train_ratio + self.validation_ratio >= 1:
+            raise ValueError("训练和验证比例之和必须小于 1")
+        return self
+
+    def to_fitness_config(self) -> StrategyFitnessConfig:
+        return StrategyFitnessConfig(
+            strategy=self.to_config(),
+            train_ratio=self.train_ratio,
+            validation_ratio=self.validation_ratio,
+            min_trades=self.min_trades,
+            max_test_drawdown=self.max_test_drawdown,
         )

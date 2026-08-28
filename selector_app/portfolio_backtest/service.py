@@ -148,6 +148,27 @@ class PortfolioBacktestService:
             progress_callback(len(refs), len(refs))
         return report
 
+    def run_stock(
+        self,
+        ref: StockRef,
+        config: PortfolioBacktestConfig,
+        parsed_formula: ParsedFormula | None = None,
+    ) -> PortfolioBacktestReport:
+        """Run the same execution rules for one stock reference."""
+
+        parsed = parsed_formula
+        if parsed is None and config.formula_text:
+            parsed = parse_formula(config.formula_text)
+        self._validate_outputs(config, parsed)
+        context = self._build_context(ref, config, parsed)
+        if context is None:
+            raise ValueError("股票没有可用于回测的行情数据")
+        dates = self._global_dates([context])
+        if not dates:
+            raise ValueError("股票没有可用于回测的日期")
+        simulation = self._simulate([context], dates, config)
+        return self._build_report(config, dates, 1, 1, 0, {}, simulation)
+
     def _validate_outputs(
         self,
         config: PortfolioBacktestConfig,
@@ -345,7 +366,8 @@ class PortfolioBacktestService:
             pending_buys = [
                 pending
                 for pending in pending_buys
-                if pending.symbol not in positions and pending.symbol not in pending_sells
+                if pending.symbol not in positions
+                and pending.symbol not in pending_sells
                 and pending.signal_date >= current_date
             ]
             for context in contexts:

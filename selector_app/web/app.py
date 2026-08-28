@@ -15,6 +15,7 @@ from selector_app.adapters.market_sync import EasyTdxMarketSync
 from selector_app.backtest.service import BacktestService
 from selector_app.portfolio_backtest.service import PortfolioBacktestService
 from selector_app.screening.jobs import ScanEngineLike, ScreenJobRunner
+from selector_app.strategy_fitness.service import StrategyFitnessService
 
 from .routers.formula_screen import router as formula_screen_router
 
@@ -28,6 +29,7 @@ def create_app(
     market_sync: EasyTdxMarketSync | object | None = None,
     backtest_service: BacktestService | object | None = None,
     portfolio_backtest_service: PortfolioBacktestService | object | None = None,
+    strategy_fitness_service: StrategyFitnessService | object | None = None,
 ) -> FastAPI:
     owns_runner = runner is None
     selected_runner = runner or ScreenJobRunner(engine=engine)
@@ -48,6 +50,7 @@ def create_app(
     app.state.market_sync_service = market_sync or EasyTdxMarketSync()
     app.state.backtest_service = backtest_service or BacktestService()
     app.state.portfolio_backtest_service = portfolio_backtest_service or PortfolioBacktestService()
+    app.state.strategy_fitness_service = strategy_fitness_service or StrategyFitnessService()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -103,11 +106,13 @@ def create_app(
     from .routers.backtest import router as backtest_router
     from .routers.market_data import router as market_data_router
     from .routers.portfolio_backtest import router as portfolio_backtest_router
+    from .routers.strategy_fitness import router as strategy_fitness_router
 
     app.include_router(formula_screen_router, prefix="/api/v1")
     app.include_router(market_data_router, prefix="/api/v1")
     app.include_router(backtest_router, prefix="/api/v1")
     app.include_router(portfolio_backtest_router, prefix="/api/v1")
+    app.include_router(strategy_fitness_router, prefix="/api/v1")
     return app
 
 

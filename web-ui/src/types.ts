@@ -340,3 +340,86 @@ export interface PortfolioBacktestResult {
   failure_reasons: Record<string, number>
   diagnostic: string | null
 }
+
+export type FitnessLabel = 'strong' | 'watch' | 'weak' | 'insufficient'
+
+export interface StrategyFitnessPayload extends Omit<PortfolioBacktestPayload, 'max_positions' | 'rebalance_frequency'> {
+  train_ratio?: number
+  validation_ratio?: number
+  min_trades?: number
+  max_test_drawdown?: number
+}
+
+export interface FitnessPhaseMetrics {
+  name: 'train' | 'validation' | 'test'
+  start_date: string
+  end_date: string
+  bars: number
+  total_trades: number
+  win_rate: number | null
+  total_return: number | null
+  annual_return: number | null
+  max_drawdown: number | null
+  sharpe: number | null
+  profit_factor: number | null
+  expectancy: number | null
+  avg_holding_days: number | null
+  diagnostic: string | null
+}
+
+export interface StrategyFitnessCheck {
+  id: string
+  label: string
+  passed: boolean
+}
+
+export interface StrategyFitnessResult {
+  market: 'SH' | 'SZ'
+  code: string
+  bars: number
+  data_start: string
+  data_end: string
+  suitability_score: number
+  passed: boolean
+  label: FitnessLabel
+  passed_checks: number
+  total_checks: number
+  positive_periods: number
+  checks: StrategyFitnessCheck[]
+  train: FitnessPhaseMetrics
+  validation: FitnessPhaseMetrics
+  test: FitnessPhaseMetrics
+  failure_reason: string | null
+}
+
+export interface StrategyFitnessReport {
+  universe: Universe
+  total_candidates: number
+  processed: number
+  skipped: number
+  errors: number
+  bars: number
+  start_date: string
+  end_date: string
+  train_end_date: string
+  validation_end_date: string
+  ranking_value: string
+  train_ratio: number
+  validation_ratio: number
+  min_trades: number
+  max_test_drawdown: number
+  results: StrategyFitnessResult[]
+  failure_reasons: Record<string, number>
+  diagnostic: string | null
+}
+
+export interface StrategyFitnessJobState {
+  job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  progress: number
+  total_candidates: number
+  total_scanned: number
+  errors: number
+  error: string | null
+  result: StrategyFitnessReport | null
+}

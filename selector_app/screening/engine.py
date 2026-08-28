@@ -191,8 +191,7 @@ class ScreenEngine:
         # arbitrary adapter instances are not guaranteed to be pickleable.
         executor_type = (
             ProcessPoolExecutor
-            if isinstance(self._adapter, EasyTdxAdapter)
-            and self._registry is FORMULA_REGISTRY
+            if isinstance(self._adapter, EasyTdxAdapter) and self._registry is FORMULA_REGISTRY
             else ThreadPoolExecutor
         )
         outcomes_by_index: dict[int, ScanOutcome] = {}
