@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from selector_app.adapters.market_sync import EasyTdxMarketSync
 from selector_app.backtest.service import BacktestService
+from selector_app.market_data.service import LocalMarketDataService
 from selector_app.portfolio_backtest.service import PortfolioBacktestService
 from selector_app.screening.jobs import ScanEngineLike, ScreenJobRunner
 from selector_app.strategy_fitness.service import StrategyFitnessService
@@ -30,6 +31,7 @@ def create_app(
     backtest_service: BacktestService | object | None = None,
     portfolio_backtest_service: PortfolioBacktestService | object | None = None,
     strategy_fitness_service: StrategyFitnessService | object | None = None,
+    local_market_data_service: LocalMarketDataService | object | None = None,
 ) -> FastAPI:
     owns_runner = runner is None
     selected_runner = runner or ScreenJobRunner(engine=engine)
@@ -51,6 +53,7 @@ def create_app(
     app.state.backtest_service = backtest_service or BacktestService()
     app.state.portfolio_backtest_service = portfolio_backtest_service or PortfolioBacktestService()
     app.state.strategy_fitness_service = strategy_fitness_service or StrategyFitnessService()
+    app.state.local_market_data_service = local_market_data_service or LocalMarketDataService()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

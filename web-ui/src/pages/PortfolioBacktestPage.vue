@@ -433,6 +433,7 @@ watch(() => form.formulaText, (value) => {
         <a class="nav-link" href="/backtest">单股回测</a>
         <a class="nav-link active" href="/portfolio-backtest" aria-current="page">组合回测</a>
         <a class="nav-link" href="/strategy-fitness">策略适配性</a>
+        <a class="nav-link" href="/market-data">本地行情</a>
       </nav>
       <div class="topbar-status"><span class="status-dot" aria-hidden="true"></span> 本地数据模式</div>
     </header>

@@ -35,6 +35,11 @@ const syncLoading = ref(false)
 const syncJob = ref<MarketSyncJobState | null>(null)
 
 const progressPercent = computed(() => Math.round((job.value?.progress ?? 0) * 100))
+const syncProgressPercent = computed(() => Math.round((syncJob.value?.progress ?? 0) * 100))
+const syncRemaining = computed(() => Math.max(
+  (syncJob.value?.total_candidates ?? 0) - (syncJob.value?.total_scanned ?? 0),
+  0,
+))
 const canSubmit = computed(() => (
   !loading.value
   && !syncLoading.value
@@ -123,6 +128,16 @@ async function syncMarketData(): Promise<void> {
   message.value = ''
   try {
     const created = await createSyncJob({ vipdoc_path: form.vipdocPath.trim() || undefined })
+    syncJob.value = {
+      job_id: created.job_id,
+      status: 'queued',
+      progress: 0,
+      total_candidates: 0,
+      total_scanned: 0,
+      errors: 0,
+      error: null,
+      result: null,
+    }
     for (;;) {
       const state = await getSyncJob(created.job_id)
       syncJob.value = state
@@ -240,6 +255,7 @@ watch(() => form.formulaText, (value) => {
         <a class="nav-link" href="/backtest">单股回测</a>
         <a class="nav-link" href="/portfolio-backtest">组合回测</a>
         <a class="nav-link" href="/strategy-fitness">策略适配性</a>
+        <a class="nav-link" href="/market-data">本地行情</a>
       </nav>
       <div class="topbar-status"><span class="status-dot" aria-hidden="true"></span> 本地数据模式</div>
     </header>
@@ -375,6 +391,13 @@ watch(() => form.formulaText, (value) => {
               {{ syncLoading ? '同步中…' : '同步最新行情' }}
             </button>
             <p class="sync-helper">从通达信服务器获取最新已完成日线，并写入共享 vipdoc。</p>
+            <div v-if="syncLoading || syncJob" class="sync-progress" data-testid="sync-progress">
+              <div class="sync-progress-heading"><span>{{ syncLoading ? '行情同步进度' : '最近一次同步' }}</span><strong>{{ syncProgressPercent }}%</strong></div>
+              <div class="progress-track sync-progress-track"><span :style="{ width: `${syncProgressPercent}%` }"></span></div>
+              <div class="sync-progress-stats"><span>已处理 <strong data-testid="sync-processed">{{ syncJob?.total_scanned ?? 0 }}</strong> / {{ syncJob?.total_candidates ?? 0 }}</span><span>剩余 <strong data-testid="sync-remaining">{{ syncRemaining }}</strong></span></div>
+              <div v-if="syncJob?.result" class="sync-result-stats"><span>写入 {{ syncJob.result.written_bars }} 根</span><span>更新 {{ syncJob.result.updated_files }} 个文件</span><span>无变化 {{ syncJob.result.unchanged_files }} 个文件</span><span :class="{ negative: syncJob.result.errors > 0 }">错误 {{ syncJob.result.errors }}</span></div>
+              <p v-if="syncJob?.error" class="field-error">{{ syncJob.error }}</p>
+            </div>
           </div>
           <p class="privacy-note">数据在本机读取，页面不会上传行情文件。</p>
         </form>

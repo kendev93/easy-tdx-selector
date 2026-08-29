@@ -116,6 +116,12 @@ input:focus, select:focus { border-color: var(--accent); }
 .sync-helper { margin: 0; color: var(--subtle); font-size: 10px; line-height: 1.4; text-align: center; }
 .spinner { width: 13px; height: 13px; border: 2px solid rgba(5, 46, 22, 0.3); border-top-color: #052e16; border-radius: 50%; animation: spin 700ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.sync-progress { margin-top: 11px; padding: 10px; border: 1px solid var(--border); background: rgba(8, 15, 32, 0.65); }
+.sync-progress-heading, .sync-progress-stats, .sync-result-stats { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--subtle); font-size: 10px; }
+.sync-progress-heading strong { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sync-progress-track { margin: 8px 0; }
+.sync-progress-stats strong { color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sync-result-stats { justify-content: flex-start; flex-wrap: wrap; margin-top: 8px; color: var(--muted); font-size: 9px; }
 
 .results-heading { align-items: center; }
 .export-actions { display: flex; gap: 8px; }
@@ -210,6 +216,55 @@ tbody tr:hover td { background: rgba(22, 34, 58, 0.45); }
 .fitness-checks { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 12px 12px; }
 .fitness-checks span { padding: 5px 7px; border: 1px solid rgba(248, 113, 113, 0.35); color: var(--danger); font-size: 10px; }
 .fitness-checks span.passed { border-color: rgba(34, 197, 94, 0.35); color: var(--accent); }
+.market-data-grid { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.local-instruments-panel, .market-chart-panel { min-width: 0; padding: 22px; }
+.market-filter-form { display: grid; gap: 8px; margin-bottom: 18px; }
+.market-filter-form .secondary-button { width: 100%; margin-top: 2px; }
+.local-instrument-list { display: grid; gap: 6px; max-height: 680px; overflow-y: auto; padding-right: 3px; }
+.local-instrument { display: grid; gap: 6px; padding: 10px 11px; border: 1px solid var(--border); border-radius: 5px; background: rgba(8, 15, 32, 0.55); color: var(--muted); cursor: pointer; text-align: left; }
+.local-instrument:hover, .local-instrument.selected { border-color: var(--accent); background: var(--accent-soft); }
+.instrument-topline, .instrument-meta, .instrument-range { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.instrument-topline strong { color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+.instrument-meta { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.instrument-range { color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; }
+.pagination { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 15px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.pagination button, .period-switch button { min-height: 31px; padding: 0 9px; border: 1px solid var(--border-strong); border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; font-size: 10px; }
+.pagination button:hover:not(:disabled), .period-switch button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.pagination button:disabled { cursor: not-allowed; opacity: 0.35; }
+.chart-toolbar { display: grid; gap: 12px; margin-bottom: 12px; }
+.period-switch { display: inline-flex; gap: 5px; }
+.period-switch button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.chart-date-range { display: flex; align-items: center; gap: 7px; color: var(--subtle); font-size: 10px; }
+.chart-date-range input { width: 135px; min-height: 34px; }
+.chart-date-range .secondary-button { min-height: 34px; margin: 0; }
+.indicator-switches { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 13px; color: var(--subtle); font-size: 10px; }
+.indicator-switches label { display: inline-flex; align-items: center; gap: 4px; margin: 0; cursor: pointer; }
+.indicator-switches input { accent-color: var(--accent); }
+.chart-data-summary { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 11px; color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; }
+.chart-loading, .market-chart-empty { display: grid; min-height: 430px; place-items: center; border: 1px dashed var(--border); color: var(--subtle); font-size: 11px; }
+.market-chart { overflow-x: auto; }
+.market-chart-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 7px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; }
+.legend-candle-up, .legend-candle-down { padding: 3px 5px; border-radius: 3px; }
+.legend-candle-up { background: rgba(34, 197, 94, 0.15); color: var(--accent); }
+.legend-candle-down { background: rgba(248, 113, 113, 0.12); color: var(--danger); }
+.legend-line { display: inline-flex; align-items: center; gap: 4px; }
+.legend-line i { display: inline-block; width: 14px; height: 2px; background: var(--accent); }
+.legend-line .legend-rsi { background: #f0abfc; }
+.legend-line .legend-macd { background: #67e8f9; }
+.market-chart-svg { display: block; width: 100%; min-width: 760px; height: auto; min-height: 430px; overflow: visible; }
+.chart-grid line, .volume-panel line { stroke: rgba(100, 116, 139, 0.2); stroke-width: 1; }
+.chart-grid text, .volume-panel text, .indicator-panel text, .chart-x-axis text { fill: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; }
+.candle-wick-up, .candle-wick-down { stroke-width: 1.2; }
+.candle-wick-up, .candle-body-up, .volume-up { stroke: #4ade80; fill: #4ade80; }
+.candle-wick-down, .candle-body-down, .volume-down { stroke: #fb7185; fill: #fb7185; }
+.candle-body-up, .candle-body-down { fill-opacity: 0.75; }
+.ma-lines polyline, .indicator-panel polyline { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.volume-panel rect { fill-opacity: 0.45; }
+.indicator-panel { isolation: isolate; }
+.indicator-guide { stroke: rgba(148, 163, 184, 0.3); stroke-dasharray: 4 4; }
+.rsi-line { stroke: #f0abfc; }
+.macd-bar-positive { fill: rgba(34, 197, 94, 0.6); }
+.macd-bar-negative { fill: rgba(248, 113, 113, 0.6); }
 .nav-link { white-space: nowrap; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 

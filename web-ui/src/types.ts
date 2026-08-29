@@ -121,6 +121,54 @@ export interface MarketSyncJobState {
   result: MarketSyncResult | null
 }
 
+export type LocalMarketScope = 'all' | 'SH' | 'SZ'
+export type MarketChartPeriod = 'daily' | 'monthly' | 'yearly'
+
+export interface LocalInstrument {
+  market: 'SH' | 'SZ'
+  code: string
+  bars: number
+  data_start: string | null
+  data_end: string | null
+  last_close: number | null
+  error: string | null
+}
+
+export interface LocalInstrumentMeta {
+  total: number
+  page: number
+  page_size: number
+  pages: number
+}
+
+export interface MarketCandle {
+  date: string
+  open: number | null
+  high: number | null
+  low: number | null
+  close: number | null
+  volume: number | null
+  amount: number | null
+  ma: Record<string, number | null>
+  rsi14: number | null
+  macd: number | null
+  macd_signal: number | null
+  macd_histogram: number | null
+}
+
+export interface LocalMarketChart {
+  market: 'SH' | 'SZ'
+  code: string
+  period: MarketChartPeriod
+  total_daily_bars: number
+  bars: number
+  available_data_start: string
+  available_data_end: string
+  data_start: string
+  data_end: string
+  candles: MarketCandle[]
+}
+
 export interface ScreenResult {
   market: string
   code: string

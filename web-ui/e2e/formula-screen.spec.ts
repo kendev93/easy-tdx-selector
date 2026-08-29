@@ -66,4 +66,6 @@ test('user can sync latest market data from the shared vipdoc', async ({ page })
   await page.getByTestId('sync-market-data').click()
 
   await expect(page.getByTestId('screen-message')).toContainText('写入 4 根')
+  await expect(page.getByTestId('sync-progress')).toContainText('已处理 2 / 2')
+  await expect(page.getByTestId('sync-progress')).toContainText('剩余 0')
 })

@@ -204,6 +204,9 @@ describe('FormulaScreenPage', () => {
 
     expect(api.createSyncJob).toHaveBeenCalledWith({ vipdoc_path: '/data/vipdoc' })
     expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('写入 4 根')
+    expect(wrapper.get('[data-testid="sync-progress"]').text()).toContain('已处理 2 / 2')
+    expect(wrapper.get('[data-testid="sync-progress"]').text()).toContain('剩余 0')
+    expect(wrapper.get('[data-testid="sync-progress"]').text()).toContain('更新 2 个文件')
   })
 
   it('surfaces parser, scan-job, and sync failures', async () => {
