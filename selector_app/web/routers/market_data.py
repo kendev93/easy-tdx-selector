@@ -113,7 +113,7 @@ def sync_job_status(job_id: str, request: Request) -> dict[str, object]:
     return {"data": state.snapshot()}
 
 
-@router.get("/local/instruments")
+@router.get("/local/instruments", response_model=None)
 def local_instruments(
     request: Request,
     vipdoc_path: str | None = Query(default=None, min_length=1, max_length=1024),
@@ -147,7 +147,7 @@ def local_instruments(
     }
 
 
-@router.get("/local/{market}/{code}/bars")
+@router.get("/local/{market}/{code}/bars", response_model=None)
 def local_market_bars(
     request: Request,
     market: Literal["SH", "SZ"],
