@@ -46,7 +46,7 @@ describe('MarketDataPage', () => {
 
     expect(marketApi.fetchLocalChart).toHaveBeenCalledWith(expect.objectContaining({ market: 'SH', code: '600000', period: 'daily' }))
     expect(wrapper.get('[data-testid="market-candlestick-chart"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="market-chart-summary"]').text()).toContain('2024-12-27')
+    expect(wrapper.get('[data-testid="market-chart-summary"]').text()).toContain('2024-12-31')
 
     await wrapper.get('[data-testid="chart-period-monthly"]').trigger('click')
     await flushPromises()
