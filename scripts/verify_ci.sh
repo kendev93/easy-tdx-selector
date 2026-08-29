@@ -1,0 +1,105 @@
+#!/bin/sh
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+
+usage() {
+  cat <<'EOF'
+用法: sh scripts/verify_ci.sh [all|python|frontend|docker] [--skip-docker] [--install-playwright]
+
+依赖需要提前安装；脚本只执行检查，不自动安装 Python/npm 依赖。
+默认 all 会执行 Python、前端和 Docker 全部检查。
+--skip-docker 只对 all 生效，用于本地快速检查。
+--install-playwright 在前端检查前执行与 CI 相同的浏览器安装命令。
+EOF
+}
+
+mode=all
+skip_docker=0
+install_playwright=0
+
+for argument in "$@"; do
+  case "$argument" in
+    all|python|frontend|docker)
+      mode=$argument
+      ;;
+    --skip-docker)
+      skip_docker=1
+      ;;
+    --install-playwright)
+      install_playwright=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf '未知参数: %s\n\n' "$argument" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+cd "$REPO_ROOT"
+
+run_python_checks() {
+  printf '%s\n' '验证 Python：测试、覆盖率、格式、Ruff、mypy'
+  PYTHONPATH=. python -m pytest --cov=selector_app --cov-report=term-missing
+  ruff format --check selector_app tests
+  ruff check selector_app tests
+  mypy selector_app
+}
+
+run_frontend_checks() {
+  printf '%s\n' '验证前端：单元测试、覆盖率、类型、构建、E2E'
+  (
+    cd "$REPO_ROOT/web-ui"
+    npm test -- --run
+    npm run test:coverage
+    npm run typecheck
+    npm run build
+    if [ "$install_playwright" -eq 1 ]; then
+      npx playwright install --with-deps chromium
+    fi
+    npm run e2e
+  )
+}
+
+run_docker_checks() {
+  printf '%s\n' '验证 Docker：Compose 配置、后端镜像、前端镜像'
+  docker compose config --quiet
+  vipdoc_fixture=$(mktemp -d "${TMPDIR:-/tmp}/easy-tdx-selector-vipdoc.XXXXXX")
+  trap 'rm -rf "$vipdoc_fixture"' EXIT HUP INT TERM
+  HOST_VIPDOC_PATH="$vipdoc_fixture" docker compose \
+    -f docker-compose.yml \
+    -f docker-compose.local-vipdoc.yml \
+    config --quiet
+  docker build --file Dockerfile --tag easy-tdx-selector-backend:ci .
+  docker build --file Dockerfile.frontend --tag easy-tdx-selector-frontend:ci .
+}
+
+case "$mode" in
+  python)
+    run_python_checks
+    ;;
+  frontend)
+    run_frontend_checks
+    ;;
+  docker)
+    run_docker_checks
+    ;;
+  all)
+    run_python_checks
+    run_frontend_checks
+    if [ "$skip_docker" -eq 0 ]; then
+      run_docker_checks
+    else
+      printf '%s\n' '已跳过 Docker 检查（显式指定 --skip-docker）'
+    fi
+    ;;
+esac
+
+printf '%s\n' '验证完成：所有选定检查均通过。'

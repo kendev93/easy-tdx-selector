@@ -175,6 +175,31 @@ GET  /api/v1/strategy-fitness/{job_id}/results
 
 ## 测试和质量检查
 
+提交或推送前建议先执行与 GitHub Actions 相同的本地验证脚本。默认会运行后端、前端、E2E 和两个 Docker 镜像检查：
+
+```bash
+sh scripts/verify_ci.sh
+```
+
+如果希望 Git 自动拦截未通过的提交和推送，可以在克隆后启用项目 Hooks：
+
+```bash
+sh scripts/install_hooks.sh
+```
+
+启用后，`pre-commit` 和 `pre-push` 都会执行完整检查（包含 Docker 镜像构建）。开发过程中若只想快速检查，可以手动使用 `sh scripts/verify_ci.sh all --skip-docker`；提交前建议恢复为完整检查。
+
+首次运行前请完成 Python 和前端依赖安装，并安装 Playwright 浏览器：
+
+```bash
+python -m pip install -r requirements.lock
+python -m pip install -e ".[dev]"
+cd web-ui
+npm ci
+npx playwright install --with-deps chromium
+cd ..
+```
+
 后端：
 
 ```bash

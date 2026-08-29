@@ -15,10 +15,7 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements.lock
       - run: python -m pip install -e ".[dev]"
-      - run: pytest --cov=selector_app --cov-report=term-missing
-      - run: ruff format --check selector_app tests
-      - run: ruff check selector_app tests
-      - run: mypy selector_app
+      - run: sh scripts/verify_ci.sh python
 
   frontend:
     runs-on: ubuntu-latest
@@ -33,24 +30,10 @@ jobs:
           cache: npm
           cache-dependency-path: web-ui/package-lock.json
       - run: npm ci
-      - run: npm test -- --run
-      - run: npm run test:coverage
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npx playwright install --with-deps chromium
-      - run: npm run e2e
+      - run: sh ../scripts/verify_ci.sh frontend --install-playwright
 
   docker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose config --quiet
-      - name: Validate desktop vipdoc override
-        run: |
-          mkdir -p "$RUNNER_TEMP/vipdoc"
-          HOST_VIPDOC_PATH="$RUNNER_TEMP/vipdoc" docker compose \
-            -f docker-compose.yml \
-            -f docker-compose.local-vipdoc.yml \
-            config --quiet
-      - run: docker build --file Dockerfile --tag easy-tdx-selector-backend:ci .
-      - run: docker build --file Dockerfile.frontend --tag easy-tdx-selector-frontend:ci .
+      - run: sh scripts/verify_ci.sh docker
