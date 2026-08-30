@@ -23,6 +23,7 @@ class InstrumentRef:
     instrument_type: InstrumentType
     source_path: Path | None = None
     board: InstrumentBoard = "main"
+    name: str | None = None
 
     @property
     def symbol(self) -> str:
@@ -44,6 +45,7 @@ class StockRef:
     path: Path
     instrument_type: InstrumentType = "stock"
     board: InstrumentBoard = "main"
+    name: str | None = None
 
     @property
     def symbol(self) -> str:

@@ -21,6 +21,7 @@ from selector_app.tdx_protocol.types import KlineCategory, Market
 SyncUniverse = Literal["all", "sh", "sz"]
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _LATEST_PROBE_BARS = 2
+InstrumentTarget = tuple[MarketCode, str, InstrumentType, InstrumentBoard, str | None]
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class MarketSyncConfig:
     instrument_types: tuple[InstrumentType, ...] | None = None
     boards: tuple[InstrumentBoard, ...] | None = None
     prefer_store_targets: bool = False
+    refresh_names: bool = False
 
     def __post_init__(self) -> None:
         if self.universe not in {"all", "sh", "sz"}:
@@ -43,6 +45,8 @@ class MarketSyncConfig:
             raise ValueError("行情服务器超时时间必须大于 0")
         if not isinstance(self.prefer_store_targets, bool):
             raise ValueError("行情同步目标来源开关必须是布尔值")
+        if not isinstance(self.refresh_names, bool):
+            raise ValueError("行情名称刷新开关必须是布尔值")
         scope = InstrumentScope.from_values(
             universe=self.universe,
             instrument_types=self.instrument_types,
@@ -131,9 +135,17 @@ class TdxMarketSync:
         with factory(config.timeout) as client:
             targets = self._list_targets(client, config)
             total = len(targets)
-            for index, (market, code, instrument_type, board) in enumerate(targets, start=1):
+            for index, (market, code, instrument_type, board, name) in enumerate(targets, start=1):
                 try:
-                    written = self._sync_one(client, market, code, instrument_type, board, config)
+                    written = self._sync_one(
+                        client,
+                        market,
+                        code,
+                        instrument_type,
+                        board,
+                        name,
+                        config,
+                    )
                     if written > 0:
                         updated_files += 1
                         written_bars += written
@@ -160,7 +172,7 @@ class TdxMarketSync:
         self,
         client: TdxMarketClient,
         config: MarketSyncConfig,
-    ) -> list[tuple[MarketCode, str, InstrumentType, InstrumentBoard]]:
+    ) -> list[InstrumentTarget]:
         if config.prefer_store_targets:
             stored = self._store.list_instruments(
                 market=None if config.universe == "all" else config.universe.upper(),
@@ -168,7 +180,33 @@ class TdxMarketSync:
                 boards=config.boards,
             )
             if stored:
-                return [(ref.market, ref.code, ref.instrument_type, ref.board) for ref in stored]
+                names_by_key: dict[tuple[str, str], str | None] = {}
+                if config.refresh_names and any(ref.name is None for ref in stored):
+                    try:
+                        security_list = client.get_security_list_all(pages="all")
+                    except Exception:  # noqa: BLE001 - name refresh must not block bar sync
+                        security_list = pd.DataFrame()
+                    stored_keys = {(ref.market, ref.code) for ref in stored}
+                    for row in security_list.to_dict(orient="records"):
+                        market = _to_market(row.get("market"))
+                        raw_code = str(row.get("code", "")).strip()
+                        if market is None or not raw_code.isdigit() or not 1 <= len(raw_code) <= 6:
+                            continue
+                        key = (market, raw_code.zfill(6))
+                        name = _clean_security_name(row.get("name"))
+                        if key in stored_keys and name is not None:
+                            names_by_key[key] = name
+                    self._store.update_instrument_names(names_by_key)
+                return [
+                    (
+                        ref.market,
+                        ref.code,
+                        ref.instrument_type,
+                        ref.board,
+                        names_by_key.get((ref.market, ref.code), ref.name),
+                    )
+                    for ref in stored
+                ]
         frame = client.get_security_list_all(pages="all")
         if frame.empty:
             return []
@@ -177,7 +215,8 @@ class TdxMarketSync:
             instrument_types=config.instrument_types,
             boards=config.boards,
         )
-        targets: list[tuple[MarketCode, str, InstrumentType, InstrumentBoard]] = []
+        targets: list[InstrumentTarget] = []
+        names: dict[tuple[str, str], str | None] = {}
         seen: set[tuple[MarketCode, str]] = set()
         for row in frame.to_dict(orient="records"):
             market = _to_market(row.get("market"))
@@ -194,9 +233,13 @@ class TdxMarketSync:
             if not scope.matches(market, instrument_type, board):
                 continue
             key = (market, code)
+            name = _clean_security_name(row.get("name"))
             if key not in seen:
                 seen.add(key)
-                targets.append((key[0], code, instrument_type, board))
+                targets.append((key[0], code, instrument_type, board, name))
+                if name is not None:
+                    names[key] = name
+        self._store.update_instrument_names(names)
         return targets
 
     def _sync_one(
@@ -206,6 +249,7 @@ class TdxMarketSync:
         code: str,
         instrument_type: InstrumentType,
         board: InstrumentBoard,
+        name: str | None,
         config: MarketSyncConfig,
     ) -> int:
         existing = self._store.read_bars(market, code, include_provisional=True)
@@ -223,6 +267,7 @@ class TdxMarketSync:
                 code=code,
                 instrument_type=instrument_type,
                 board=board,
+                name=name,
                 now=self._clock(),
             )
             if not _has_new_online_data(existing, latest_frame):
@@ -236,6 +281,7 @@ class TdxMarketSync:
             code=code,
             instrument_type=instrument_type,
             board=board,
+            name=name,
             now=self._clock(),
         )
         if normalized.empty:
@@ -263,6 +309,13 @@ def _market_enum(value: MarketCode) -> Market:
     return Market.SH if value == "SH" else Market.SZ
 
 
+def _clean_security_name(value: object) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _normalize_online_frame(
     frame: pd.DataFrame,
     *,
@@ -270,11 +323,21 @@ def _normalize_online_frame(
     code: str,
     instrument_type: InstrumentType,
     board: InstrumentBoard,
+    name: str | None = None,
     now: datetime,
 ) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(
-            columns=["date", "open", "high", "low", "close", "volume", "amount", "bar_status"]
+            columns=[
+                "date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount",
+                "bar_status",
+            ]
         )
     volume_column = "vol" if "vol" in frame.columns else "volume"
     required = {"open", "high", "low", "close", "amount", volume_column}
@@ -311,6 +374,7 @@ def _normalize_online_frame(
     )
     normalized["market"] = market
     normalized["code"] = code
+    normalized["name"] = name
     normalized["instrument_type"] = instrument_type
     normalized["board"] = board
     return (

@@ -66,12 +66,13 @@ describe('formula screen form helpers', () => {
     expect(buildScanPayload(form).minimum_matches).toBeNull()
     expect(combineModeLabel('any')).toBe('任一满足 OR')
     const csv = resultsToCsv([{
-      market: 'SH', code: '600000', signal_date: 20260824, last_close: 12.3,
+      market: 'SH', code: '600000', name: '浦发银行', signal_date: 20260824, last_close: 12.3,
       matched_signals: ['indicator_one.main_force_entry'], match_count: 1,
       indicator_values: { 'indicator_one.var5': 1.2 },
     }])
     expect(csv).toContain('"matched_signals"')
     expect(csv).toContain('600000')
+    expect(csv).toContain('浦发银行')
   })
 
   it('includes opt-in instrument and board filters while leaving empty filters unrestricted', () => {

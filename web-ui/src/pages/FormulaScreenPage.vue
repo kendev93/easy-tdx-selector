@@ -453,11 +453,12 @@ watch(() => form.formulaText, (value) => {
           <div v-else class="table-wrap">
             <table data-testid="results-table">
               <caption class="sr-only">公式选股结果</caption>
-              <thead><tr><th>市场</th><th>代码</th><th>信号日期</th><th>最新收盘</th><th>命中条件</th><th>指标值</th></tr></thead>
+              <thead><tr><th>市场</th><th>代码</th><th>中文名</th><th>信号日期</th><th>最新收盘</th><th>命中条件</th><th>指标值</th></tr></thead>
               <tbody>
                 <tr v-for="result in results" :key="`${result.market}-${result.code}`">
                   <td><span class="market-pill" :class="result.market.toLowerCase()">{{ result.market }}</span></td>
                   <td><strong class="code">{{ result.code }}</strong><small v-if="result.instrument_type" class="muted-code">{{ result.instrument_type }}</small></td>
+                  <td class="instrument-name">{{ result.name || '—' }}</td>
                   <td class="muted-code">{{ result.signal_date }}</td>
                   <td><strong>{{ result.last_close.toFixed(2) }}</strong></td>
                   <td><div class="signal-tags"><span v-for="signal in result.matched_signals" :key="signal" class="signal-tag">{{ signalDisplayName(signal, metadata, customMetadata) }}</span><small>{{ result.match_count }} 条</small></div></td>

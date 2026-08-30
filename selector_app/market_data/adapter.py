@@ -69,6 +69,7 @@ class DuckDbMarketDataAdapter:
             StockRef(
                 market=ref.market,
                 code=ref.code,
+                name=ref.name,
                 path=ref.source_path or source_path,
                 instrument_type=ref.instrument_type,
                 board=ref.board,
@@ -112,6 +113,7 @@ class DuckDbMarketDataAdapter:
             StockRef(
                 market=market,
                 code=code,
+                name=available[(market, code)].name,
                 path=available[(market, code)].source_path or source_path,
                 instrument_type=available[(market, code)].instrument_type,
                 board=available[(market, code)].board,

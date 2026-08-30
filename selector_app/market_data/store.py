@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import date, datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -26,7 +26,7 @@ from .models import (
     StockRef,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _BAR_COLUMNS = [
     "market",
     "code",
@@ -79,6 +79,16 @@ def _date_text(value: object) -> str | None:
         return value.isoformat()
     text = str(value)
     return None if text in {"NaT", "nan", "None"} else text[:10]
+
+
+def _clean_name(value: object) -> str | None:
+    if value is None:
+        return None
+    missing = pd.isna(value)
+    if isinstance(missing, (bool, np.bool_)) and bool(missing):
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _append_filter(
@@ -156,6 +166,7 @@ class DuckDbMarketDataStore:
                 CREATE TABLE IF NOT EXISTS instruments (
                     market VARCHAR NOT NULL,
                     code VARCHAR NOT NULL,
+                    name VARCHAR,
                     instrument_type VARCHAR NOT NULL,
                     board VARCHAR NOT NULL DEFAULT 'main',
                     source_path VARCHAR,
@@ -232,45 +243,55 @@ class DuckDbMarketDataStore:
 
     @staticmethod
     def _migrate_schema(connection: duckdb.DuckDBPyConnection, version: int) -> None:
-        if version >= 2:
-            return
         tables = {
             str(row[0])
             for row in connection.execute(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
             ).fetchall()
         }
-        for table in ("instruments", "daily_bars"):
-            if table not in tables:
-                continue
+        if version < 2:
+            for table in ("instruments", "daily_bars"):
+                if table not in tables:
+                    continue
+                columns = {
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = 'main' AND table_name = ?",
+                        [table],
+                    ).fetchall()
+                }
+                if "board" in columns:
+                    continue
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN board VARCHAR DEFAULT 'main'")
+                connection.execute(
+                    f"UPDATE {table} SET board = CASE "
+                    "WHEN market = 'SH' AND substr(code, 1, 2) = '68' THEN 'star' "
+                    "WHEN market = 'SZ' AND substr(code, 1, 2) = '30' THEN 'chinext' "
+                    "WHEN (market = 'SH' AND substr(code, 1, 2) = '90') "
+                    "OR (market = 'SZ' AND substr(code, 1, 2) = '20') THEN 'b_share' "
+                    "WHEN (market = 'SH' AND substr(code, 1, 2) IN "
+                    "('50','51','52','53','55','56','58')) "
+                    "OR (market = 'SZ' AND substr(code, 1, 2) IN "
+                    "('15','16','17','18')) THEN 'fund' "
+                    "WHEN (market = 'SH' AND substr(code, 1, 2) IN ('00','88','99')) "
+                    "OR (market = 'SZ' AND substr(code, 1, 2) = '39') THEN 'index' "
+                    "WHEN (market = 'SH' AND substr(code, 1, 2) IN "
+                    "('01','10','11','12','13','14','20')) "
+                    "OR (market = 'SZ' AND substr(code, 1, 2) IN "
+                    "('10','11','12','13','14')) THEN 'bond' "
+                    "ELSE 'main' END"
+                )
+        if version < 3 and "instruments" in tables:
             columns = {
                 str(row[0])
                 for row in connection.execute(
                     "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_schema = 'main' AND table_name = ?",
-                    [table],
+                    "WHERE table_schema = 'main' AND table_name = 'instruments'"
                 ).fetchall()
             }
-            if "board" in columns:
-                continue
-            connection.execute(f"ALTER TABLE {table} ADD COLUMN board VARCHAR DEFAULT 'main'")
-            connection.execute(
-                f"UPDATE {table} SET board = CASE "
-                "WHEN market = 'SH' AND substr(code, 1, 2) = '68' THEN 'star' "
-                "WHEN market = 'SZ' AND substr(code, 1, 2) = '30' THEN 'chinext' "
-                "WHEN (market = 'SH' AND substr(code, 1, 2) = '90') "
-                "OR (market = 'SZ' AND substr(code, 1, 2) = '20') THEN 'b_share' "
-                "WHEN (market = 'SH' AND substr(code, 1, 2) IN "
-                "('50','51','52','53','55','56','58')) "
-                "OR (market = 'SZ' AND substr(code, 1, 2) IN ('15','16','17','18')) THEN 'fund' "
-                "WHEN (market = 'SH' AND substr(code, 1, 2) IN ('00','88','99')) "
-                "OR (market = 'SZ' AND substr(code, 1, 2) = '39') THEN 'index' "
-                "WHEN (market = 'SH' AND substr(code, 1, 2) IN "
-                "('01','10','11','12','13','14','20')) "
-                "OR (market = 'SZ' AND substr(code, 1, 2) IN "
-                "('10','11','12','13','14')) THEN 'bond' "
-                "ELSE 'main' END"
-            )
+            if "name" not in columns:
+                connection.execute("ALTER TABLE instruments ADD COLUMN name VARCHAR")
 
     def _schema_version_on_disk(self) -> int | None:
         if not self.database_path.exists():
@@ -405,19 +426,21 @@ class DuckDbMarketDataStore:
         code: str,
         instrument_type: InstrumentType,
         board: InstrumentBoard,
+        name: str | None = None,
         source_path: str | None = None,
         source_state: str = "active",
     ) -> None:
         connection.execute(
             """
             INSERT INTO instruments (
-                market, code, instrument_type, board, source_path, first_date, last_date,
+                market, code, name, instrument_type, board, source_path, first_date, last_date,
                 bar_count, source_state, updated_at
             )
-            SELECT ?, ?, ?, ?, ?, MIN(trade_date), MAX(trade_date), COUNT(*), ?, ?
+            SELECT ?, ?, ?, ?, ?, ?, MIN(trade_date), MAX(trade_date), COUNT(*), ?, ?
             FROM daily_bars
             WHERE market = ? AND code = ?
             ON CONFLICT (market, code) DO UPDATE SET
+                name = COALESCE(excluded.name, instruments.name),
                 instrument_type = excluded.instrument_type,
                 board = excluded.board,
                 source_path = COALESCE(excluded.source_path, instruments.source_path),
@@ -430,6 +453,7 @@ class DuckDbMarketDataStore:
             [
                 market,
                 code,
+                _clean_name(name),
                 instrument_type,
                 board,
                 source_path,
@@ -440,6 +464,52 @@ class DuckDbMarketDataStore:
             ],
         )
 
+    def update_instrument_names(self, names: Mapping[tuple[str, str], str | None]) -> int:
+        """Update names for instruments already present in the repository."""
+
+        self._require_writer()
+        rows = [
+            {
+                "market": market.strip().upper(),
+                "code": code.strip(),
+                "name": _clean_name(name),
+            }
+            for (market, code), name in names.items()
+            if _clean_name(name) is not None
+        ]
+        if not rows:
+            return 0
+        frame = pd.DataFrame(rows, columns=["market", "code", "name"])
+        with _WRITE_LOCK, self._connect() as connection:
+            connection.execute("BEGIN")
+            try:
+                connection.register("_instrument_names", frame)
+                matched = connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM instruments AS instruments
+                    INNER JOIN _instrument_names AS names
+                      ON instruments.market = names.market
+                     AND instruments.code = names.code
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE instruments
+                    SET name = names.name, updated_at = ?
+                    FROM _instrument_names AS names
+                    WHERE instruments.market = names.market
+                      AND instruments.code = names.code
+                    """,
+                    [_now()],
+                )
+                connection.unregister("_instrument_names")
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return int(matched[0] if matched else 0)
+
     def replace_local_bars(
         self,
         market: str,
@@ -447,6 +517,7 @@ class DuckDbMarketDataStore:
         instrument_type: InstrumentType,
         frame: pd.DataFrame,
         *,
+        name: str | None = None,
         source_path: str | None = None,
         board: InstrumentBoard | None = None,
     ) -> int:
@@ -486,6 +557,7 @@ class DuckDbMarketDataStore:
                     code,
                     instrument_type,
                     board=resolved_board,
+                    name=name,
                     source_path=source_path,
                 )
                 connection.execute("COMMIT")
@@ -501,6 +573,14 @@ class DuckDbMarketDataStore:
         if frame.empty:
             return (0, 0)
         incoming_frame = frame.copy(deep=True)
+        names_by_key: dict[tuple[str, str], str | None] = {}
+        if "name" in incoming_frame.columns:
+            for market, code, name in (
+                incoming_frame[["market", "code", "name"]]
+                .drop_duplicates(subset=["market", "code"], keep="last")
+                .itertuples(index=False, name=None)
+            ):
+                names_by_key[(str(market).strip().upper(), str(code).strip())] = _clean_name(name)
         if "board" not in incoming_frame.columns:
             incoming_frame["board"] = [
                 classify_board(str(market), str(code))
@@ -597,7 +677,14 @@ class DuckDbMarketDataStore:
                     .drop_duplicates()
                     .itertuples(index=False, name=None)
                 ):
-                    self._refresh_instrument(connection, market, code, instrument_type, board)
+                    self._refresh_instrument(
+                        connection,
+                        market,
+                        code,
+                        instrument_type,
+                        board,
+                        name=names_by_key.get((str(market).upper(), str(code))),
+                    )
                 connection.unregister("_incoming_online_bars")
                 connection.execute("COMMIT")
             except Exception:
@@ -742,7 +829,7 @@ class DuckDbMarketDataStore:
         _append_filter(conditions, parameters, "instrument_type", instrument_types)
         _append_filter(conditions, parameters, "board", boards)
         query = (
-            "SELECT market, code, instrument_type, board, source_path FROM instruments"
+            "SELECT market, code, name, instrument_type, board, source_path FROM instruments"
             + (f" WHERE {' AND '.join(conditions)}" if conditions else "")
             + " ORDER BY market, code"
         )
@@ -752,11 +839,12 @@ class DuckDbMarketDataStore:
             InstrumentRef(
                 market=cast(MarketCode, market_value),
                 code=cast(str, code),
+                name=cast(str | None, name),
                 instrument_type=cast(InstrumentType, instrument_type),
                 board=cast(InstrumentBoard, board),
                 source_path=Path(source_path) if source_path else None,
             )
-            for market_value, code, instrument_type, board, source_path in rows
+            for market_value, code, name, instrument_type, board, source_path in rows
         ]
 
     def status(self) -> DataStoreStatus:

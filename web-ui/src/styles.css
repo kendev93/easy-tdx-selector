@@ -159,6 +159,7 @@ tbody tr:hover td { background: rgba(22, 34, 58, 0.45); }
 .market-pill.sz { background: rgba(168, 85, 247, 0.12); color: #d8b4fe; }
 .code, .muted-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .muted-code { color: var(--muted); }
+.instrument-name { color: var(--text); font-weight: 600; white-space: nowrap; }
 .signal-tags { display: flex; max-width: 260px; flex-wrap: wrap; gap: 5px; }
 .signal-tag { padding: 4px 6px; border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 3px; background: var(--accent-soft); color: #bbf7d0; font-size: 10px; white-space: nowrap; }
 .signal-tags > small { align-self: center; color: var(--subtle); font-size: 9px; }

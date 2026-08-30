@@ -205,6 +205,7 @@ export interface LocalMarketChart {
 export interface ScreenResult {
   market: string
   code: string
+  name?: string | null
   instrument_type?: InstrumentType
   board?: InstrumentBoard
   signal_date: number

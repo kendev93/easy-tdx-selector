@@ -153,11 +153,12 @@ export function signalDisplayName(
 }
 
 export function resultsToCsv(results: ScreenResult[]): string {
-  const header = ['market', 'code', 'instrument_type', 'board', 'signal_date', 'last_close', 'matched_signals', 'match_count', 'indicator_values']
+  const header = ['market', 'code', 'name', 'instrument_type', 'board', 'signal_date', 'last_close', 'matched_signals', 'match_count', 'indicator_values']
   const escape = (value: string): string => `"${value.replace(/"/g, '""')}"`
   const rows = results.map((result) => [
     result.market,
     result.code,
+    result.name ?? '',
     result.instrument_type ?? '',
     result.board ?? '',
     String(result.signal_date),

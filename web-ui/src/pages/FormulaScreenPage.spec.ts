@@ -58,7 +58,7 @@ describe('FormulaScreenPage', () => {
       total_signals: 2, errors: 0, skipped: 0, error: null,
     })
     vi.mocked(api.getResults).mockResolvedValue({
-      results: [{ market: 'SH', code: '600000', signal_date: 20260824, last_close: 12.35, matched_signals: ['indicator_three.accumulation_zone'], match_count: 1, indicator_values: { 'indicator_three.varo7': 2.2, 'indicator_three.varo6': null } }],
+      results: [{ market: 'SH', code: '600000', name: '浦发银行', signal_date: 20260824, last_close: 12.35, matched_signals: ['indicator_three.accumulation_zone'], match_count: 1, indicator_values: { 'indicator_three.varo7': 2.2, 'indicator_three.varo6': null } }],
       meta: { total_candidates: 2, total_scanned: 2, total_signals: 1, errors: 0, skipped: 0, failure_reasons: {}, skip_reasons: {} },
     })
   })
@@ -114,6 +114,7 @@ describe('FormulaScreenPage', () => {
       combine_mode: 'at_least', minimum_matches: 2,
     }))
     expect(wrapper.get('[data-testid="results-table"]').text()).toContain('600000')
+    expect(wrapper.get('[data-testid="results-table"]').text()).toContain('浦发银行')
     expect(wrapper.get('[data-testid="export-json"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="export-csv"]')).toBeTruthy()
 

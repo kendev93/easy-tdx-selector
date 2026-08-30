@@ -43,9 +43,9 @@ class FakeClient:
         self.list_calls += 1
         return pd.DataFrame(
             [
-                {"market": "SH", "code": "600000"},
-                {"market": "SH", "code": "510300"},
-                {"market": "SH", "code": "000001"},
+                {"market": "SH", "code": "600000", "name": "浦发银行"},
+                {"market": "SH", "code": "510300", "name": "沪深300ETF"},
+                {"market": "SH", "code": "000001", "name": "上证指数"},
             ]
         )
 
@@ -76,6 +76,7 @@ def test_online_sync_writes_duckdb_without_touching_vipdoc(tmp_path: Path) -> No
     assert report.written_bars == 9
     assert store.status().bar_count == 9
     assert not list(source_dir.rglob("*.day"))
+    assert store.list_instruments()[0].name == "上证指数"
 
 
 def test_online_sync_does_not_overwrite_local_rows(tmp_path: Path) -> None:
@@ -109,3 +110,39 @@ def test_online_sync_uses_existing_store_targets_without_refetching_security_lis
 
     assert report.total_candidates == 1
     assert client.list_calls == 0
+
+
+def test_online_security_list_fills_name_for_existing_local_instrument(tmp_path: Path) -> None:
+    store = DuckDbMarketDataStore(tmp_path / "market.duckdb")
+    store.replace_local_bars("SH", "600000", "stock", _frame())
+    client = FakeClient()
+
+    EasyTdxMarketSync(
+        store=store,
+        client_factory=lambda _timeout: client,
+    ).sync(MarketSyncConfig(universe="sh"))
+
+    ref = next(ref for ref in store.list_instruments() if ref.code == "600000")
+    assert ref.name == "浦发银行"
+
+
+def test_store_target_sync_refreshes_missing_names_once(tmp_path: Path) -> None:
+    store = DuckDbMarketDataStore(tmp_path / "market.duckdb")
+    store.replace_local_bars("SH", "600000", "stock", _frame())
+    client = FakeClient()
+
+    report = EasyTdxMarketSync(
+        store=store,
+        client_factory=lambda _timeout: client,
+    ).sync(
+        MarketSyncConfig(
+            universe="sh",
+            prefer_store_targets=True,
+            refresh_names=True,
+        )
+    )
+
+    assert report.total_candidates == 1
+    assert client.list_calls == 1
+    ref = next(ref for ref in store.list_instruments() if ref.code == "600000")
+    assert ref.name == "浦发银行"

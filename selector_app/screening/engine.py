@@ -118,6 +118,7 @@ def _evaluate_frame(
             indicator_values=indicator_values,
             instrument_type=getattr(ref, "instrument_type", "stock"),
             board=getattr(ref, "board", "main"),
+            name=getattr(ref, "name", None),
         )
     )
 

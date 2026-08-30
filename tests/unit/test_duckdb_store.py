@@ -114,6 +114,16 @@ def test_store_status_reports_counts_and_range(tmp_path: Path) -> None:
     assert status.data_end == "2024-01-03"
 
 
+def test_store_persists_instrument_name_metadata(tmp_path: Path) -> None:
+    store = DuckDbMarketDataStore(tmp_path / "market.duckdb")
+    store.replace_local_bars("SH", "600000", "stock", _bars())
+
+    assert store.update_instrument_names({("SH", "600000"): "浦发银行"}) == 1
+
+    ref = store.list_instruments()[0]
+    assert ref.name == "浦发银行"
+
+
 def test_read_only_store_can_query_but_cannot_write(tmp_path: Path) -> None:
     database = tmp_path / "market.duckdb"
     store = DuckDbMarketDataStore(database)

@@ -77,7 +77,12 @@ def test_combine_modes_and_minimum_bounds() -> None:
 
 def test_engine_scans_multiple_stocks_and_keeps_full_result_fields(tmp_path: Path) -> None:
     refs = [
-        StockRef(market="SH", code="600000", path=tmp_path / "sh600000.day"),
+        StockRef(
+            market="SH",
+            code="600000",
+            path=tmp_path / "sh600000.day",
+            name="浦发银行",
+        ),
         StockRef(market="SZ", code="000001", path=tmp_path / "sz000001.day"),
     ]
     frames = {ref.code: make_bars() for ref in refs}
@@ -92,6 +97,7 @@ def test_engine_scans_multiple_stocks_and_keeps_full_result_fields(tmp_path: Pat
     assert report.results[0].market in {"SH", "SZ"}
     assert report.results[0].signal_date == 20240608
     assert report.results[0].last_close == 1.2
+    assert report.results[0].name == "浦发银行"
     assert report.results[0].matched_signals == ("indicator_three.accumulation_zone",)
     assert report.results[0].match_count == 1
     assert "indicator_three.varo7" in report.results[0].indicator_values

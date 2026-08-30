@@ -79,8 +79,12 @@ def classify_instrument(market: str, code: str) -> InstrumentType | None:
     board = classify_board(market, code)
     if board in {"main", "star", "chinext", "b_share"}:
         return "stock"
-    if board in {"fund", "index", "bond"}:
-        return board
+    if board == "fund":
+        return "fund"
+    if board == "index":
+        return "index"
+    if board == "bond":
+        return "bond"
     return None
 
 

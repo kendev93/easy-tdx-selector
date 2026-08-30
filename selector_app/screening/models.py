@@ -53,6 +53,7 @@ class ScreenMatch:
     indicator_values: Mapping[str, float | None]
     instrument_type: str = "stock"
     board: InstrumentBoard = "main"
+    name: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "indicator_values", MappingProxyType(dict(self.indicator_values)))
@@ -61,6 +62,7 @@ class ScreenMatch:
         return {
             "market": self.market,
             "code": self.code,
+            "name": self.name,
             "signal_date": self.signal_date,
             "last_close": self.last_close,
             "matched_signals": list(self.matched_signals),

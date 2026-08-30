@@ -107,6 +107,7 @@ def _sync_config(payload: MarketSyncRequest, *, prefer_store_targets: bool) -> M
         instrument_types=tuple(payload.instrument_types or ()),
         boards=tuple(payload.boards or ()),
         prefer_store_targets=prefer_store_targets,
+        refresh_names=prefer_store_targets,
     )
 
 
