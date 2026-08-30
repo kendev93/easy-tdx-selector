@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+import os
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import cast
 
 from fastapi import FastAPI, HTTPException, Request
@@ -16,6 +18,7 @@ from selector_app.adapters.market_sync import TdxMarketSync
 from selector_app.backtest.service import BacktestService
 from selector_app.market_data.adapter import DuckDbMarketDataAdapter
 from selector_app.market_data.day_importer import LocalDayImporter
+from selector_app.market_data.models import ImportReport
 from selector_app.market_data.service import LocalMarketDataService
 from selector_app.market_data.store import DuckDbMarketDataStore
 from selector_app.portfolio_backtest.service import PortfolioBacktestService
@@ -56,6 +59,32 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        app.state.startup_import_job_id = None
+        if owns_runner:
+            vipdoc_root = Path(os.getenv("SELECTOR_VIPDOC_PATH") or "/data/vipdoc").expanduser()
+            has_day_files = vipdoc_root.is_dir() and any(
+                directory.glob("*.day")
+                for directory in (
+                    vipdoc_root / "sh" / "lday",
+                    vipdoc_root / "sz" / "lday",
+                )
+            )
+            if has_day_files:
+
+                def run_startup_import(progress: Callable[[int, int], None]) -> dict[str, object]:
+                    result = selected_importer.import_vipdoc(
+                        vipdoc_root,
+                        progress_callback=progress,
+                    )
+                    return result.to_dict() if isinstance(result, ImportReport) else result
+
+                try:
+                    app.state.startup_import_job_id = selected_runner.submit_callable(
+                        run_startup_import,
+                        description="本地行情自动导入",
+                    )
+                except RuntimeError:
+                    logger.exception("无法提交本地行情自动导入任务")
         yield
         if owns_runner:
             selected_runner.shutdown()

@@ -92,6 +92,20 @@ export async function createLocalImport(payload: {
   return response.data
 }
 
+export async function createMarketDataSync(payload: {
+  vipdoc_path?: string
+  universe?: 'all' | 'sh' | 'sz'
+  bars?: number
+  instrument_types?: InstrumentType[]
+  boards?: InstrumentBoard[]
+} = {}): Promise<{ job_id: string; status: string }> {
+  const response = await request<{ data: { job_id: string; status: string } }>(
+    `${API_BASE}/sync`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  )
+  return response.data
+}
+
 export async function createOnlineSync(payload: {
   universe?: 'all' | 'sh' | 'sz'
   bars?: number

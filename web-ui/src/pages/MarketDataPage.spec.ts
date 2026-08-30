@@ -14,6 +14,7 @@ vi.mock('../api/marketData', async () => {
     fetchLocalChart: vi.fn(),
     fetchStoreStatus: vi.fn(),
     createLocalImport: vi.fn(),
+    createMarketDataSync: vi.fn(),
     createOnlineSync: vi.fn(),
     getMarketDataJob: vi.fn(),
   }
@@ -124,5 +125,70 @@ describe('MarketDataPage', () => {
       instrument_types: ['stock'],
       boards: ['main'],
     })
+  })
+
+  it('uses one-click sync to import local data and then update online data', async () => {
+    vi.mocked(marketApi.createMarketDataSync).mockResolvedValue({ job_id: 'sync-1', status: 'queued' })
+    vi.mocked(marketApi.getMarketDataJob).mockResolvedValue({
+      job_id: 'sync-1', status: 'completed', progress: 1, total_candidates: 1,
+      total_scanned: 1, errors: 0, error: null, result: {
+        source: 'combined',
+        imported_files: 0,
+        updated_files: 1,
+        written_bars: 1,
+        local_import: { source: 'local', imported_files: 1, imported_bars: 2 },
+        online_sync: { source: 'online', updated_files: 1, written_bars: 1 },
+      },
+    })
+    const wrapper = mount(MarketDataPage)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="market-sync-online"]').trigger('click')
+    await flushPromises()
+
+    expect(marketApi.createMarketDataSync).toHaveBeenCalledWith({
+      vipdoc_path: '/data/vipdoc',
+      universe: 'all',
+      bars: 800,
+    })
+    expect(wrapper.get('[data-testid="market-data-progress"]').text()).toContain('本地导入 1 个文件')
+    expect(wrapper.get('[data-testid="market-data-progress"]').text()).toContain('在线写入 1 根')
+  })
+
+  it('waits for an automatic startup import before loading the local list', async () => {
+    vi.mocked(marketApi.fetchStoreStatus)
+      .mockResolvedValueOnce({
+        database_path: '/data/market/market.duckdb',
+        schema_version: 2,
+        instrument_count: 0,
+        bar_count: 0,
+        data_start: null,
+        data_end: null,
+        last_local_import_at: null,
+        last_online_sync_at: null,
+        startup_import_job_id: 'startup-1',
+      })
+      .mockResolvedValueOnce({
+        database_path: '/data/market/market.duckdb',
+        schema_version: 2,
+        instrument_count: 1,
+        bar_count: 2,
+        data_start: '2024-01-02',
+        data_end: '2024-01-03',
+        last_local_import_at: '2026-08-30T10:00:00',
+        last_online_sync_at: null,
+        startup_import_job_id: null,
+      })
+    vi.mocked(marketApi.getMarketDataJob).mockResolvedValue({
+      job_id: 'startup-1', status: 'completed', progress: 1, total_candidates: 1,
+      total_scanned: 1, errors: 0, error: null,
+      result: { source: 'local', imported_files: 1, imported_bars: 2 },
+    })
+    const wrapper = mount(MarketDataPage)
+    await flushPromises()
+
+    expect(marketApi.getMarketDataJob).toHaveBeenCalledWith('startup-1')
+    expect(marketApi.fetchLocalInstruments).toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="market-store-status"]').text()).toContain('K线 2')
   })
 })

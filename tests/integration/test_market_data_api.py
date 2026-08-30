@@ -176,3 +176,20 @@ def test_local_import_job_populates_duckdb_and_market_routes_read_it(tmp_path: P
     assert instruments.json()["data"][0]["code"] == "600000"
     assert status.status_code == 200
     assert status.json()["data"]["bar_count"] == 2
+
+
+def test_app_startup_auto_imports_configured_vipdoc(tmp_path: Path, monkeypatch) -> None:
+    vipdoc = tmp_path / "vipdoc"
+    _write_day(vipdoc / "sh" / "lday" / "sh600000.day", 20240102)
+    monkeypatch.setenv("SELECTOR_VIPDOC_PATH", str(vipdoc))
+    store = DuckDbMarketDataStore(tmp_path / "market.duckdb")
+    app = create_app(market_data_store=store)
+
+    with TestClient(app) as client:
+        job_id = app.state.startup_import_job_id
+        state = _wait_for_job(client, job_id)
+
+    assert state["status"] == "completed"
+    assert state["description"] == "本地行情自动导入"
+    assert state["result"]["imported_files"] == 1
+    assert store.status().bar_count == 1

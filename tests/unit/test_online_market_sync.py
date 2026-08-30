@@ -30,6 +30,7 @@ class FakeClient:
     def __init__(self, frame: pd.DataFrame | None = None) -> None:
         self.frame = frame if frame is not None else _frame()
         self.requests: list[tuple[str, int]] = []
+        self.list_calls = 0
 
     def __enter__(self) -> FakeClient:
         return self
@@ -39,6 +40,7 @@ class FakeClient:
 
     def get_security_list_all(self, pages: str = "all") -> pd.DataFrame:
         del pages
+        self.list_calls += 1
         return pd.DataFrame(
             [
                 {"market": "SH", "code": "600000"},
@@ -91,3 +93,19 @@ def test_online_sync_does_not_overwrite_local_rows(tmp_path: Path) -> None:
     frame = store.read_bars("SH", "600000")
     assert frame.iloc[0]["close"] == 20.1
     assert set(frame.loc[frame["code"] == "600000", "source"]) == {"local"}
+
+
+def test_online_sync_uses_existing_store_targets_without_refetching_security_list(
+    tmp_path: Path,
+) -> None:
+    store = DuckDbMarketDataStore(tmp_path / "market.duckdb")
+    store.replace_local_bars("SH", "600000", "stock", _frame())
+    client = FakeClient()
+
+    report = EasyTdxMarketSync(
+        store=store,
+        client_factory=lambda _timeout: client,
+    ).sync(MarketSyncConfig(universe="sh", prefer_store_targets=True))
+
+    assert report.total_candidates == 1
+    assert client.list_calls == 0

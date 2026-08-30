@@ -24,7 +24,7 @@
 - 公式层安全除零、数据不足跳过、无未来数据；
 - Python 单元/集成测试、Vue 单元测试和 Playwright E2E 流程。
 
-首次进入页面时，预置模式会默认选中“准备拉升”和“建仓区”，Docker 模式自动填入 `/data/vipdoc`；市场范围、条件组合、并发和周期收在“高级设置”中。页面会在浏览器本地记住上次配置，不会上传这些配置。
+应用启动时如果检测到 `SELECTOR_VIPDOC_PATH` 或 `/data/vipdoc` 中存在行情文件，会在后台自动执行一次增量导入；首次导入完成后，DuckDB 就可以直接用于筛选、行情浏览和回测。预置模式会默认选中“准备拉升”和“建仓区”，Docker 模式自动填入 `/data/vipdoc`；市场范围、条件组合、并发和周期收在“高级设置”中。页面会在浏览器本地记住上次配置，不会上传这些配置。
 
 ## 启动
 
@@ -105,7 +105,7 @@ vipdoc/
 
 导入读取的是 `.day` 的原始价格口径；如果桌面端在收盘前已写入今日临时记录，本应用会在 15:05 前将它标记为 `provisional`，筛选和回测默认忽略，收盘后下一次导入会自动转为 `completed`。自定义列表每行支持 `SH 600000`、`SZ 000001` 或单独六位代码，空行和 `#` 注释会忽略。
 
-页面的“在线更新行情”按钮会通过内置的最小 TDX 客户端获取最新日线并写入 DuckDB，不会写回 `.day` 文件；已有本地来源记录优先，在线数据只补充缺失日期或更新在线来源。同步过程中页面会显示已处理数量、总标的数、进度和错误摘要。全量历史优先通过本地 `.day` 导入，在线同步只负责最新窗口和增量更新。
+页面的“一键同步行情”按钮会先增量导入本地 `vipdoc`，再通过内置的最小 TDX 客户端补充最新日线并写入 DuckDB，不会写回 `.day` 文件；已有本地来源记录优先，在线数据只补充缺失日期或更新在线来源。同步过程中页面会显示已处理数量、总标的数、进度和错误摘要。全量历史优先通过本地 `.day` 导入，在线阶段只负责最新窗口和增量更新；如果只需要在线阶段，也可以调用 `/sync-online`。
 
 ## 本地行情浏览
 
@@ -161,11 +161,11 @@ GET  /api/v1/formula-screen/jobs/{job_id}/results
 GET  /api/v1/formula-screen/jobs/{job_id}/export.json
 GET  /api/v1/formula-screen/jobs/{job_id}/export.csv
 POST /api/v1/market-data/import-local
-POST /api/v1/market-data/sync-online
-POST /api/v1/market-data/sync                         # 在线同步兼容别名
+POST /api/v1/market-data/sync-online                   # 仅在线更新
+POST /api/v1/market-data/sync                          # 一键本地导入 + 在线补缺
 GET  /api/v1/market-data/store
 GET  /api/v1/market-data/jobs/{job_id}
-GET  /api/v1/market-data/sync/jobs/{job_id}              # 旧在线同步轮询别名
+GET  /api/v1/market-data/sync/jobs/{job_id}              # 在线/一键同步轮询
 GET  /api/v1/market-data/local/instruments
 GET  /api/v1/market-data/local/{market}/{code}/bars
 POST /api/v1/backtests

@@ -105,7 +105,10 @@ export interface JobState {
 }
 
 export interface MarketSyncResult {
-  source?: 'local' | 'online'
+  source?: 'local' | 'online' | 'combined'
+  status?: 'skipped'
+  reason?: string
+  vipdoc_path?: string
   discovered_files?: number
   imported_files?: number
   updated_files?: number
@@ -122,6 +125,8 @@ export interface MarketSyncResult {
   written_bars?: number
   errors?: number
   failure_reasons?: Record<string, number>
+  local_import?: MarketSyncResult
+  online_sync?: MarketSyncResult
 }
 
 export interface MarketSyncJobState {
@@ -144,6 +149,7 @@ export interface DataStoreStatus {
   data_end: string | null
   last_local_import_at: string | null
   last_online_sync_at: string | null
+  startup_import_job_id?: string | null
 }
 
 export type LocalMarketScope = 'all' | 'SH' | 'SZ'

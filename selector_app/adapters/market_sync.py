@@ -32,6 +32,7 @@ class MarketSyncConfig:
     timeout: float = 30.0
     instrument_types: tuple[InstrumentType, ...] | None = None
     boards: tuple[InstrumentBoard, ...] | None = None
+    prefer_store_targets: bool = False
 
     def __post_init__(self) -> None:
         if self.universe not in {"all", "sh", "sz"}:
@@ -40,6 +41,8 @@ class MarketSyncConfig:
             raise ValueError("每只股票同步的 K 线数量必须在 1 到 800 之间")
         if self.timeout <= 0:
             raise ValueError("行情服务器超时时间必须大于 0")
+        if not isinstance(self.prefer_store_targets, bool):
+            raise ValueError("行情同步目标来源开关必须是布尔值")
         scope = InstrumentScope.from_values(
             universe=self.universe,
             instrument_types=self.instrument_types,
@@ -158,6 +161,14 @@ class TdxMarketSync:
         client: TdxMarketClient,
         config: MarketSyncConfig,
     ) -> list[tuple[MarketCode, str, InstrumentType, InstrumentBoard]]:
+        if config.prefer_store_targets:
+            stored = self._store.list_instruments(
+                market=None if config.universe == "all" else config.universe.upper(),
+                instrument_types=config.instrument_types,
+                boards=config.boards,
+            )
+            if stored:
+                return [(ref.market, ref.code, ref.instrument_type, ref.board) for ref in stored]
         frame = client.get_security_list_all(pages="all")
         if frame.empty:
             return []

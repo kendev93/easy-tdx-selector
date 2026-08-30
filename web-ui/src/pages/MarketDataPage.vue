@@ -4,7 +4,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { FormulaScreenApiError } from '../api/formulaScreen'
 import {
   createLocalImport,
-  createOnlineSync,
+  createMarketDataSync,
   fetchLocalChart,
   fetchLocalInstruments,
   fetchStoreStatus,
@@ -110,7 +110,23 @@ function toggleBoard(board: InstrumentBoard): void {
 
 async function loadStoreStatus(): Promise<void> {
   try {
-    storeStatus.value = await fetchStoreStatus()
+    const status = await fetchStoreStatus()
+    storeStatus.value = status
+    if (status.startup_import_job_id && !marketJob.value) {
+      syncLoading.value = true
+      syncLabel.value = '正在自动导入本地行情…'
+      try {
+        beginJob(status.startup_import_job_id, 'running')
+        await waitForJob(status.startup_import_job_id)
+        await loadStoreStatus()
+        await loadInstruments()
+      } catch (error) {
+        message.value = apiMessage(error)
+      } finally {
+        syncLoading.value = false
+        syncLabel.value = ''
+      }
+    }
   } catch (error) {
     message.value = apiMessage(error)
   }
@@ -178,10 +194,11 @@ async function importLocalData(): Promise<void> {
 
 async function syncOnlineData(): Promise<void> {
   syncLoading.value = true
-  syncLabel.value = '正在在线更新行情…'
+  syncLabel.value = '正在同步本地与在线行情…'
   message.value = ''
   try {
-    const job = await createOnlineSync({
+    const job = await createMarketDataSync({
+      vipdoc_path: form.vipdocPath.trim(),
       universe: form.syncUniverse,
       bars: 800,
       ...syncScopePayload(),
@@ -284,7 +301,7 @@ function formatPrice(value: number | null): string {
 
 onMounted(async () => {
   await loadStoreStatus()
-  await loadInstruments()
+  if (!marketJob.value) await loadInstruments()
 })
 
 function instrumentLabel(type: LocalInstrument['instrument_type']): string {
@@ -333,11 +350,11 @@ function instrumentLabel(type: LocalInstrument['instrument_type']): string {
             <div><label for="market-sync-universe">同步市场</label><select id="market-sync-universe" v-model="form.syncUniverse" data-testid="market-sync-universe"><option value="all">沪深全部</option><option value="sh">仅上海</option><option value="sz">仅深圳</option></select></div>
             <div class="scope-options"><span>证券类型</span><label v-for="option in INSTRUMENT_TYPE_OPTIONS" :key="option.key"><input type="checkbox" :data-testid="`market-sync-type-${option.key}`" :checked="form.syncInstrumentTypes.includes(option.key)" @change="toggleInstrumentType(option.key)">{{ option.label }}</label></div>
             <div class="scope-options"><span>板块</span><label v-for="option in BOARD_OPTIONS" :key="option.key"><input type="checkbox" :data-testid="`market-sync-board-${option.key}`" :checked="form.syncBoards.includes(option.key)" @change="toggleBoard(option.key)">{{ option.label }}</label></div>
-            <small class="scope-helper">类型或板块未勾选表示不限制；两者同时选择时取交集。</small>
+            <small class="scope-helper">类型或板块未勾选表示不限制；两者同时选择时取交集。一键同步会先导入本地 vipdoc，再在线补缺。</small>
           </div>
           <div class="market-sync-actions">
             <button class="primary-button" data-testid="market-import-local" type="button" :disabled="syncLoading" @click="importLocalData">{{ syncLoading ? syncLabel : '导入本地行情' }}</button>
-            <button class="secondary-button" data-testid="market-sync-online" type="button" :disabled="syncLoading" @click="syncOnlineData">在线更新行情</button>
+            <button class="secondary-button" data-testid="market-sync-online" type="button" :disabled="syncLoading" @click="syncOnlineData">一键同步行情</button>
           </div>
         </div>
         <div v-if="marketJob" class="sync-progress" data-testid="market-data-progress">
@@ -346,6 +363,7 @@ function instrumentLabel(type: LocalInstrument['instrument_type']): string {
           <div class="sync-progress-stats"><span>已处理 <strong>{{ marketJob.total_scanned }}</strong> / {{ marketJob.total_candidates }}</span><span :class="{ negative: marketJob.errors > 0 }">错误 <strong>{{ marketJob.errors }}</strong></span></div>
           <div v-if="marketJob.result" class="sync-result-stats">
             <template v-if="marketJob.result.source === 'local'"><span>导入文件 {{ marketJob.result.imported_files ?? 0 }}</span><span>替换标的 {{ marketJob.result.replaced_instruments ?? 0 }}</span><span>写入 K 线 {{ marketJob.result.imported_bars ?? 0 }}</span><span>跳过 {{ marketJob.result.skipped_files ?? 0 }}</span></template>
+            <template v-else-if="marketJob.result.source === 'combined'"><span>本地导入 {{ marketJob.result.local_import?.imported_files ?? 0 }} 个文件</span><span>本地写入 {{ marketJob.result.local_import?.imported_bars ?? 0 }} 根</span><span>在线更新 {{ marketJob.result.online_sync?.updated_files ?? 0 }} 个标的</span><span>在线写入 {{ marketJob.result.online_sync?.written_bars ?? 0 }} 根</span></template>
             <template v-else><span>更新标的 {{ marketJob.result.updated_files }}</span><span>写入 K 线 {{ marketJob.result.written_bars }}</span><span>无变化 {{ marketJob.result.unchanged_files }}</span></template>
             <span :class="{ negative: marketJob.result.errors > 0 }">失败 {{ marketJob.result.errors }}</span>
           </div>

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createLocalImport,
+  createMarketDataSync,
   createOnlineSync,
   fetchLocalChart,
   fetchLocalInstruments,
@@ -39,6 +40,32 @@ describe('market data API', () => {
       message: '请求失败，请检查本地行情目录后重试。',
       status: 422,
     })
+  })
+
+  it('posts a one-click local-plus-online synchronization request', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: { job_id: 'sync-1', status: 'queued' } }), { status: 202 }),
+    )
+
+    await expect(createMarketDataSync({
+      vipdoc_path: '/data/vipdoc',
+      universe: 'sh',
+      instrument_types: ['stock'],
+      boards: ['main'],
+    })).resolves.toMatchObject({ job_id: 'sync-1' })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/market-data/sync',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          vipdoc_path: '/data/vipdoc',
+          universe: 'sh',
+          instrument_types: ['stock'],
+          boards: ['main'],
+        }),
+      }),
+    )
   })
 
   it('starts local import and online sync jobs and reads store status', async () => {

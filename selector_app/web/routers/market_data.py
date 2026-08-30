@@ -100,6 +100,32 @@ def _resolved_vipdoc_path(vipdoc_path: str | None) -> str:
     return vipdoc_path or os.getenv("SELECTOR_VIPDOC_PATH") or "/data/vipdoc"
 
 
+def _sync_config(payload: MarketSyncRequest, *, prefer_store_targets: bool) -> MarketSyncConfig:
+    return MarketSyncConfig(
+        universe=payload.universe,
+        bars=payload.bars,
+        instrument_types=tuple(payload.instrument_types or ()),
+        boards=tuple(payload.boards or ()),
+        prefer_store_targets=prefer_store_targets,
+    )
+
+
+def _result_dict(result: MarketSyncReport | ImportReport | dict[str, object]) -> dict[str, object]:
+    return result.to_dict() if isinstance(result, (MarketSyncReport, ImportReport)) else result
+
+
+def _combined_result(
+    local_result: dict[str, object],
+    online_result: dict[str, object],
+) -> dict[str, object]:
+    return {
+        **online_result,
+        "source": "combined",
+        "local_import": local_result,
+        "online_sync": online_result,
+    }
+
+
 @router.post("/import-local", status_code=status.HTTP_202_ACCEPTED)
 def create_local_import(
     payload: LocalMarketImportRequest,
@@ -143,7 +169,7 @@ def create_local_import(
 @router.get("/jobs/{job_id}")
 def market_data_job_status(job_id: str, request: Request) -> dict[str, object]:
     state = _runner(request).get(job_id)
-    if state is None or state.description not in {"本地行情导入", "行情同步"}:
+    if state is None or state.description not in {"本地行情导入", "本地行情自动导入", "行情同步"}:
         raise HTTPException(status_code=404, detail="行情任务不存在或已过期")
     return {"data": state.snapshot()}
 
@@ -151,7 +177,14 @@ def market_data_job_status(job_id: str, request: Request) -> dict[str, object]:
 @router.get("/store", response_model=None)
 def market_data_store_status(request: Request) -> dict[str, object] | JSONResponse:
     try:
-        return {"data": _store(request).status().to_dict()}
+        data = _store(request).status().to_dict()
+        startup_job_id = getattr(request.app.state, "startup_import_job_id", None)
+        if startup_job_id:
+            startup_state = _runner(request).get(startup_job_id)
+            if startup_state is None or startup_state.status in {"completed", "failed"}:
+                startup_job_id = None
+        data["startup_import_job_id"] = startup_job_id
+        return {"data": data}
     except (MarketDataStoreError, duckdb.Error, OSError) as exc:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -165,21 +198,52 @@ def market_data_store_status(request: Request) -> dict[str, object] | JSONRespon
 
 
 @router.post("/sync-online", status_code=status.HTTP_202_ACCEPTED)
+def create_online_sync_job(payload: MarketSyncRequest, request: Request) -> JSONResponse:
+    return _create_sync_job(payload, request, include_local=False)
+
+
 @router.post("/sync", status_code=status.HTTP_202_ACCEPTED)
 def create_sync_job(payload: MarketSyncRequest, request: Request) -> JSONResponse:
-    config = MarketSyncConfig(
-        universe=payload.universe,
-        bars=payload.bars,
-        instrument_types=tuple(payload.instrument_types or ()),
-        boards=tuple(payload.boards or ()),
-    )
+    return _create_sync_job(payload, request, include_local=True)
+
+
+def _create_sync_job(
+    payload: MarketSyncRequest,
+    request: Request,
+    *,
+    include_local: bool,
+) -> JSONResponse:
+    config = _sync_config(payload, prefer_store_targets=include_local)
 
     def run_sync(progress: Callable[[int, int], None]) -> dict[str, object]:
         try:
-            result = _service(request).sync(config, progress)
+            if not include_local:
+                return _result_dict(_service(request).sync(config, progress))
+
+            local_root = os.path.abspath(
+                os.path.expanduser(_resolved_vipdoc_path(payload.vipdoc_path))
+            )
+            if os.path.isdir(local_root):
+                local_result = _result_dict(
+                    _importer(request).import_vipdoc(
+                        local_root,
+                        universe=payload.universe,
+                        instrument_types=payload.instrument_types,
+                        boards=payload.boards,
+                        progress_callback=progress,
+                    )
+                )
+            else:
+                local_result = {
+                    "source": "local",
+                    "status": "skipped",
+                    "reason": "未找到 vipdoc 目录",
+                    "vipdoc_path": local_root,
+                }
+            online_result = _result_dict(_service(request).sync(config, progress))
         except (MarketDataStoreError, duckdb.Error) as exc:
             raise TaskUserError(_storage_error_message(exc)) from exc
-        return result.to_dict() if isinstance(result, MarketSyncReport) else result
+        return online_result if not include_local else _combined_result(local_result, online_result)
 
     try:
         job_id = _runner(request).submit_callable(run_sync, description="行情同步")

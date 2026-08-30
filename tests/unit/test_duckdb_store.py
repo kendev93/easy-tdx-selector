@@ -125,6 +125,26 @@ def test_read_only_store_can_query_but_cannot_write(tmp_path: Path) -> None:
         read_only.set_meta("test", "value")
 
 
+def test_store_retries_transient_duckdb_lock(tmp_path: Path, monkeypatch) -> None:
+    database = tmp_path / "market.duckdb"
+    store = DuckDbMarketDataStore(database)
+    store.replace_local_bars("SH", "600000", "stock", _bars())
+    original_connect = duckdb.connect
+    attempts = 0
+
+    def flaky_connect(path, *, read_only=False):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            raise duckdb.IOException("Could not set lock on file: transient lock")
+        return original_connect(path, read_only=read_only)
+
+    monkeypatch.setattr(duckdb, "connect", flaky_connect)
+
+    assert len(store.read_bars("SH", "600000")) == 2
+    assert attempts == 3
+
+
 def test_backup_database_creates_recoverable_copy(tmp_path: Path) -> None:
     database = tmp_path / "market.duckdb"
     store = DuckDbMarketDataStore(database)

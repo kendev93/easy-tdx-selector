@@ -203,6 +203,54 @@ def test_market_sync_job_can_be_created_and_polled() -> None:
     assert received == {"instrument_types": ("stock",), "boards": ("main",)}
 
 
+def test_one_click_sync_imports_local_vipdoc_before_online_sync(tmp_path: Path) -> None:
+    vipdoc = tmp_path / "vipdoc"
+    write_day_records(
+        vipdoc / "sh" / "lday" / "sh600000.day",
+        [(20240102, 10.0, 11.0, 9.0, 10.5, 1000.0, 10000.0)],
+    )
+    store = DuckDbMarketDataStore(tmp_path / "market.duckdb")
+
+    class FakeMarketSync:
+        def sync(self, config, progress_callback=None):
+            if progress_callback:
+                progress_callback(1, 1)
+            return {
+                "source": "online",
+                "total_candidates": 1,
+                "processed": 1,
+                "updated_files": 0,
+                "unchanged_files": 1,
+                "written_bars": 0,
+                "errors": 0,
+                "failure_reasons": {},
+            }
+
+    with TestClient(
+        create_app(
+            engine=EmptyEngine(),
+            market_sync=FakeMarketSync(),
+            market_data_store=store,
+            local_day_importer=LocalDayImporter(store),
+        )
+    ) as client:
+        response = client.post(
+            "/api/v1/market-data/sync",
+            json={"vipdoc_path": str(vipdoc), "universe": "sh"},
+        )
+        assert response.status_code == 202
+        state = wait_for_done(
+            client,
+            response.json()["data"]["job_id"],
+            base_path="/api/v1/market-data/jobs",
+        )
+
+    assert state["status"] == "completed"
+    assert state["result"]["local_import"]["imported_files"] == 1
+    assert state["result"]["online_sync"]["written_bars"] == 0
+    assert store.status().bar_count == 1
+
+
 def test_formula_screen_scope_filters_are_forwarded_to_the_engine(tmp_path: Path) -> None:
     received = {}
 

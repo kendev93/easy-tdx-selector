@@ -150,6 +150,7 @@ class CustomFormulaParseRequest(BaseModel):
 class MarketSyncRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    vipdoc_path: str | None = Field(default=None, max_length=1024)
     universe: Literal["all", "sh", "sz"] = "all"
     bars: int = Field(default=800, ge=1, le=800)
     instrument_types: list[InstrumentType] | None = Field(default=None, max_length=4)

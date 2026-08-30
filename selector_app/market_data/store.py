@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import time
 from collections.abc import Iterable
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -45,6 +46,7 @@ _BAR_COLUMNS = [
 ]
 _FRAME_COLUMNS = ["date", "open", "high", "low", "close", "volume", "amount", "bar_status"]
 _WRITE_LOCK = RLock()
+_CONNECT_RETRY_DELAYS = (0.05, 0.1, 0.25, 0.5, 1.0)
 _INSTRUMENT_TYPES = {"stock", "fund", "index", "bond"}
 _INSTRUMENT_BOARDS = {"main", "star", "chinext", "b_share", "fund", "index", "bond"}
 
@@ -110,15 +112,22 @@ class DuckDbMarketDataStore:
                 raise FileNotFoundError(f"行情数据库不存在: {self.database_path}")
         else:
             self._ensure_initialized()
-        try:
-            return duckdb.connect(str(self.database_path), read_only=mode)
-        except duckdb.Error as exc:
-            message = str(exc).lower()
-            if "lock" in message or "conflicting" in message:
-                detail = "行情数据库当前被其它进程占用，请关闭其它写入进程后重试"
-            else:
-                detail = "行情数据库无法打开，请检查文件权限或数据库完整性"
-            raise MarketDataStoreError(detail) from exc
+        last_error: duckdb.Error | None = None
+        for delay in (0.0, *_CONNECT_RETRY_DELAYS):
+            if delay:
+                time.sleep(delay)
+            try:
+                return duckdb.connect(str(self.database_path), read_only=mode)
+            except duckdb.Error as exc:
+                message = str(exc).lower()
+                if "lock" not in message and "conflicting" not in message:
+                    raise MarketDataStoreError(
+                        "行情数据库无法打开，请检查文件权限或数据库完整性"
+                    ) from exc
+                last_error = exc
+        raise MarketDataStoreError(
+            "行情数据库当前被其它进程占用，请关闭其它写入进程后重试"
+        ) from last_error
 
     def _ensure_initialized(self) -> None:
         if self._initialized:
