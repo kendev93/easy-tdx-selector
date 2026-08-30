@@ -3,11 +3,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from easy_tdx.MyTT import BARSLAST, COUNT, CROSS, EMA, HHV, LLV, REF, SMA
 
 from selector_app.formulas.indicator_one import calculate_indicator_one
 from selector_app.formulas.indicator_three import calculate_indicator_three
 from selector_app.formulas.indicator_two import calculate_indicator_two
+from selector_app.formulas.tdx_math import BARSLAST, COUNT, CROSS, EMA, HHV, LLV, REF, SMA
 
 
 def make_bars(length: int = 180, *, descending: bool = False) -> pd.DataFrame:

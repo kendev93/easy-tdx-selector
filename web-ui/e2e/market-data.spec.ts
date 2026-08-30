@@ -2,8 +2,8 @@ import { expect, test } from '@playwright/test'
 
 const instruments = {
   data: [
-    { market: 'SH', code: '600000', bars: 320, data_start: '2020-01-01', data_end: '2024-12-31', last_close: 12.5, error: null },
-    { market: 'SZ', code: '000001', bars: 300, data_start: '2020-01-01', data_end: '2024-12-31', last_close: 10.2, error: null },
+    { market: 'SH', code: '600000', instrument_type: 'stock', bars: 320, data_start: '2020-01-01', data_end: '2024-12-31', last_close: 12.5, error: null },
+    { market: 'SZ', code: '000001', instrument_type: 'stock', bars: 300, data_start: '2020-01-01', data_end: '2024-12-31', last_close: 10.2, error: null },
   ],
   meta: { total: 2, page: 1, page_size: 50, pages: 1 },
 }
@@ -21,6 +21,11 @@ const chart = (period: 'daily' | 'monthly' | 'yearly') => ({
 })
 
 test('user can browse local instruments and switch chart periods', async ({ page }) => {
+  await page.route('**/api/v1/market-data/store', (route) => route.fulfill({ json: { data: {
+    database_path: '/data/market/market.duckdb', schema_version: 1, instrument_count: 2,
+    bar_count: 620, data_start: '2020-01-01', data_end: '2024-12-31',
+    last_local_import_at: null, last_online_sync_at: null,
+  } } }))
   await page.route('**/api/v1/market-data/local/instruments**', (route) => route.fulfill({ json: instruments }))
   await page.route('**/api/v1/market-data/local/SH/600000/bars*', async (route) => {
     const url = new URL(route.request().url())

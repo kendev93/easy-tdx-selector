@@ -29,7 +29,7 @@ describe('formula screen API client', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'job/1', status: 'completed' } }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const payload = { selected_signals: ['indicator_three.begin_zone'], combine_mode: 'any' as const, minimum_matches: null, universe: 'all' as const, universe_file: null, vipdoc_path: '/tmp', workers: 1, period: 'daily' as const, formula_text: null, formula_parameters: {} }
+    const payload = { selected_signals: ['indicator_three.begin_zone'], combine_mode: 'any' as const, minimum_matches: null, universe: 'all' as const, universe_file: null, workers: 1, period: 'daily' as const, formula_text: null, formula_parameters: {} }
     await expect(createJob(payload)).resolves.toEqual({ job_id: 'job/1', status: 'queued' })
     await expect(getJob('job/1')).resolves.toMatchObject({ status: 'completed' })
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(payload)
@@ -63,9 +63,9 @@ describe('formula screen API client', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'sync-1', status: 'completed', progress: 1, total_candidates: 1, total_scanned: 1, errors: 0, error: null, result: { written_bars: 3 } } }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(createSyncJob({ vipdoc_path: '/data/vipdoc' })).resolves.toEqual({ job_id: 'sync-1', status: 'queued' })
+    await expect(createSyncJob()).resolves.toEqual({ job_id: 'sync-1', status: 'queued' })
     await expect(getSyncJob('sync-1')).resolves.toMatchObject({ status: 'completed', result: { written_bars: 3 } })
     expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/market-data/sync')
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ vipdoc_path: '/data/vipdoc' })
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({})
   })
 })

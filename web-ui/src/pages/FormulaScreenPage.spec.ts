@@ -27,6 +27,8 @@ const metadata: FormulaScreenMetadata = {
   supported_markets: ['SH', 'SZ'],
   supported_universe: [
     { value: 'all', label: '沪深全部 A 股' },
+    { value: 'sh', label: '仅上海品种' },
+    { value: 'sz', label: '仅深圳品种' },
     { value: 'custom', label: '自定义股票列表' },
   ],
   periods: [{ value: 'daily', label: '日线' }],
@@ -67,7 +69,6 @@ describe('FormulaScreenPage', () => {
 
     expect(wrapper.get('[data-testid="formula-screen-page"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="signal-indicator_three.prepare_rally"]')).toBeTruthy()
-    expect((wrapper.get('[data-testid="vipdoc-path"]').element as HTMLInputElement).value).toBe('/data/vipdoc')
     for (const checkbox of wrapper.findAll('input[type="checkbox"]')) {
       if ((checkbox.element as HTMLInputElement).checked) await checkbox.setValue(false)
     }
@@ -101,7 +102,6 @@ describe('FormulaScreenPage', () => {
   it('submits selected signals, shows results, and keeps export controls', async () => {
     const wrapper = mount(FormulaScreenPage)
     await flushPromises()
-    await wrapper.get('[data-testid="vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="signal-indicator_three.prepare_rally"]').setValue(true)
     await wrapper.get('[data-testid="signal-indicator_three.accumulation_zone"]').setValue(true)
     await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
@@ -111,7 +111,7 @@ describe('FormulaScreenPage', () => {
 
     expect(api.createJob).toHaveBeenCalledWith(expect.objectContaining({
       selected_signals: ['indicator_three.prepare_rally', 'indicator_three.accumulation_zone'],
-      combine_mode: 'at_least', minimum_matches: 2, vipdoc_path: '/data/vipdoc',
+      combine_mode: 'at_least', minimum_matches: 2,
     }))
     expect(wrapper.get('[data-testid="results-table"]').text()).toContain('600000')
     expect(wrapper.get('[data-testid="export-json"]')).toBeTruthy()
@@ -126,11 +126,25 @@ describe('FormulaScreenPage', () => {
     clickSpy.mockRestore()
   })
 
+  it('submits the selected instrument and board scope', async () => {
+    const wrapper = mount(FormulaScreenPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="screen-scope-type-stock"]').setValue(true)
+    await wrapper.get('[data-testid="screen-scope-board-main"]').setValue(true)
+    await wrapper.get('[data-testid="screen-config"]').trigger('submit')
+    await flushPromises()
+
+    expect(api.createJob).toHaveBeenCalledWith(expect.objectContaining({
+      instrument_types: ['stock'],
+      boards: ['main'],
+    }))
+  })
+
   it('shows a user-facing error when the job request fails', async () => {
     vi.mocked(api.createJob).mockRejectedValueOnce(new Error('network down'))
     const wrapper = mount(FormulaScreenPage)
     await flushPromises()
-    await wrapper.get('[data-testid="vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="signal-indicator_three.prepare_rally"]').setValue(true)
     await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
     await wrapper.get('[data-testid="minimum-matches"]').setValue(1)
@@ -151,7 +165,6 @@ describe('FormulaScreenPage', () => {
     expect(wrapper.get('[data-testid="custom-formula-meta"]').text()).toContain('1 个参数')
     expect(wrapper.get('[data-testid="custom-signal-custom.breakout"]')).toBeTruthy()
     await wrapper.get('[data-testid="formula-param-N"]').setValue(7)
-    await wrapper.get('[data-testid="vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
     await wrapper.get('[data-testid="combine-mode"]').setValue('any')
     await wrapper.get('[data-testid="screen-config"]').trigger('submit')
@@ -202,11 +215,28 @@ describe('FormulaScreenPage', () => {
     await wrapper.get('[data-testid="sync-market-data"]').trigger('click')
     await flushPromises()
 
-    expect(api.createSyncJob).toHaveBeenCalledWith({ vipdoc_path: '/data/vipdoc' })
+    expect(api.createSyncJob).toHaveBeenCalledWith({ universe: 'all' })
     expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('写入 4 根')
     expect(wrapper.get('[data-testid="sync-progress"]').text()).toContain('已处理 2 / 2')
     expect(wrapper.get('[data-testid="sync-progress"]').text()).toContain('剩余 0')
     expect(wrapper.get('[data-testid="sync-progress"]').text()).toContain('更新 2 个文件')
+  })
+
+  it('uses the selected scope for online synchronization', async () => {
+    const wrapper = mount(FormulaScreenPage)
+    await flushPromises()
+    await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="universe"]').setValue('sh')
+    await wrapper.get('[data-testid="screen-scope-type-stock"]').setValue(true)
+    await wrapper.get('[data-testid="screen-scope-board-main"]').setValue(true)
+    await wrapper.get('[data-testid="sync-market-data"]').trigger('click')
+    await flushPromises()
+
+    expect(api.createSyncJob).toHaveBeenCalledWith({
+      universe: 'sh',
+      instrument_types: ['stock'],
+      boards: ['main'],
+    })
   })
 
   it('surfaces parser, scan-job, and sync failures', async () => {
@@ -234,7 +264,6 @@ describe('FormulaScreenPage', () => {
       total_signals: 0, errors: 1, skipped: 0, error: null,
     })
     await wrapper.get('[data-testid="mode-preset"]').trigger('click')
-    await wrapper.get('[data-testid="vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="signal-indicator_three.prepare_rally"]').setValue(true)
     await wrapper.get('[data-testid="advanced-toggle"]').trigger('click')
     await wrapper.get('[data-testid="minimum-matches"]').setValue(1)

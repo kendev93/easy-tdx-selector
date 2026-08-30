@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 from datetime import date
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -12,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from selector_app.backtest.models import BacktestConfig
 from selector_app.formulas.custom import FormulaParseError, custom_output_id, parse_formula
 from selector_app.formulas.registry import FORMULA_REGISTRY
+from selector_app.market_data.models import InstrumentBoard, InstrumentType
+from selector_app.market_data.scope import InstrumentScope
 from selector_app.portfolio_backtest.models import (
     PortfolioBacktestConfig,
     PortfolioUniverse,
@@ -71,6 +72,18 @@ def validate_formula_values(formula_text: str | None, value_ids: list[str]) -> N
         raise ValueError(f"未知指标输出: {', '.join(invalid)}")
 
 
+def validate_instrument_scope(
+    universe: str,
+    instrument_types: list[InstrumentType] | None,
+    boards: list[InstrumentBoard] | None,
+) -> None:
+    InstrumentScope.from_values(
+        universe=universe,
+        instrument_types=instrument_types,
+        boards=boards,
+    )
+
+
 class FormulaScreenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -79,7 +92,9 @@ class FormulaScreenRequest(BaseModel):
     minimum_matches: int | None = Field(default=None, ge=1, le=32)
     universe: Literal["all", "sh", "sz", "custom"] = "all"
     universe_file: str | None = Field(default=None, max_length=1024)
-    vipdoc_path: str = Field(min_length=1, max_length=1024)
+    instrument_types: list[InstrumentType] | None = Field(default=None, max_length=4)
+    boards: list[InstrumentBoard] | None = Field(default=None, max_length=7)
+    vipdoc_path: str = Field(default="", max_length=1024)
     workers: int = Field(default=1, ge=1, le=32)
     period: Literal["daily"] = "daily"
     formula_text: str | None = Field(default=None, max_length=20_000)
@@ -92,6 +107,7 @@ class FormulaScreenRequest(BaseModel):
             self.selected_signals,
             self.formula_parameters,
         )
+        validate_instrument_scope(self.universe, self.instrument_types, self.boards)
         if len(set(self.selected_signals)) != len(self.selected_signals):
             raise ValueError("选股信号不能重复")
         if self.combine_mode == "at_least":
@@ -113,15 +129,11 @@ class FormulaScreenRequest(BaseModel):
             vipdoc_path=self.vipdoc_path,
             workers=self.workers,
             period=self.period,
+            instrument_types=tuple(self.instrument_types or ()),
+            boards=tuple(self.boards or ()),
             formula_text=self.formula_text,
             formula_parameters=self.formula_parameters,
         )
-
-
-def validate_vipdoc_path(path: str) -> None:
-    resolved = Path(path).expanduser()
-    if not resolved.is_dir():
-        raise ValueError(f"vipdoc 路径不存在或不是目录: {resolved}")
 
 
 class JobCreatedResponse(BaseModel):
@@ -140,7 +152,27 @@ class MarketSyncRequest(BaseModel):
 
     universe: Literal["all", "sh", "sz"] = "all"
     bars: int = Field(default=800, ge=1, le=800)
-    vipdoc_path: str | None = Field(default=None, min_length=1, max_length=1024)
+    instrument_types: list[InstrumentType] | None = Field(default=None, max_length=4)
+    boards: list[InstrumentBoard] | None = Field(default=None, max_length=7)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> MarketSyncRequest:
+        validate_instrument_scope(self.universe, self.instrument_types, self.boards)
+        return self
+
+
+class LocalMarketImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vipdoc_path: str = Field(min_length=1, max_length=1024)
+    universe: Literal["all", "sh", "sz"] = "all"
+    instrument_types: list[InstrumentType] | None = Field(default=None, max_length=4)
+    boards: list[InstrumentBoard] | None = Field(default=None, max_length=7)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> LocalMarketImportRequest:
+        validate_instrument_scope(self.universe, self.instrument_types, self.boards)
+        return self
 
 
 class BacktestRequest(BaseModel):
@@ -150,7 +182,7 @@ class BacktestRequest(BaseModel):
 
     market: Literal["SH", "SZ"] = "SH"
     code: str = Field(pattern=r"^\d{6}$")
-    vipdoc_path: str = Field(default="/data/vipdoc", min_length=1, max_length=1024)
+    vipdoc_path: str = Field(default="", max_length=1024)
     buy_signal: str = Field(min_length=1, max_length=128)
     sell_signal: str = Field(min_length=1, max_length=128)
     formula_text: str | None = Field(default=None, max_length=20_000)
@@ -212,9 +244,11 @@ class PortfolioBacktestRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    vipdoc_path: str = Field(default="/data/vipdoc", min_length=1, max_length=1024)
+    vipdoc_path: str = Field(default="", max_length=1024)
     universe: PortfolioUniverse = "all"
     universe_file: str | None = Field(default=None, max_length=1024)
+    instrument_types: list[InstrumentType] | None = Field(default=None, max_length=4)
+    boards: list[InstrumentBoard] | None = Field(default=None, max_length=7)
     selected_signals: list[str] = Field(min_length=1, max_length=32)
     combine_mode: Literal["all", "any", "at_least"] = "any"
     minimum_matches: int | None = Field(default=None, ge=1, le=32)
@@ -252,6 +286,7 @@ class PortfolioBacktestRequest(BaseModel):
         if self.sell_signal is not None:
             signal_ids.append(self.sell_signal)
         validate_formula_signals(self.formula_text, signal_ids, self.formula_parameters)
+        validate_instrument_scope(self.universe, self.instrument_types, self.boards)
         validate_formula_values(
             self.formula_text,
             [
@@ -298,6 +333,8 @@ class PortfolioBacktestRequest(BaseModel):
             vipdoc_path=self.vipdoc_path,
             universe=self.universe,
             universe_file=self.universe_file,
+            instrument_types=tuple(self.instrument_types or ()),
+            boards=tuple(self.boards or ()),
             selected_signals=tuple(self.selected_signals),
             combine_mode=self.combine_mode,
             minimum_matches=self.minimum_matches,

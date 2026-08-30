@@ -1,121 +1,75 @@
-# easy_tdx 上游 API 审计
+# TDX 上游协议审计与解耦记录
 
-审计日期：2026-08-24  
-审计对象：本机已下载的 `easy_tdx` 源码 checkout  
-版本：`1.20.8`
+审计日期：2026-08-30
 
-本项目是独立的 Easy TDX 选股台，不是 easy_tdx 官方项目，也不复制或修改上游源码。正式运行依赖 `easy-tdx==1.20.8`；本报告记录的是本版本实际检查过的 API 和兼容边界。
+本项目当前不安装或导入外部行情框架。本文件记录此前对成熟 TDX 实现的协议核对结果，以及项目内置实现的边界，便于后续维护者在协议变化时重新验证。
 
-## 1. 版本、依赖和入口
+## 1. 参考版本和变更范围
 
-上游 `pyproject.toml` 当前声明：
+此前对成熟实现的稳定版本和近期变更做过协议审计。近期变化主要集中在服务器健康评分、空 K 线响应处理、MAC/扩展行情和资金流等能力；本项目只需要 SH/SZ 日线同步，因此没有把上游 Web、CLI、MAC、资金流、扩展市场、筛选或回测模块带入运行时。
 
-- 包名：`easy-tdx`；版本：`1.20.8`；Python `>=3.10`；
-- 核心依赖：`pandas>=2.0,<3`、`tzdata>=2024.1`、`click>=8.0,<9`；
-- `web` 可选依赖提供 FastAPI/Uvicorn；`science` 可选依赖提供 SciPy；
-- `easy-tdx` CLI 入口为 `easy_tdx.cli:cli`。
+协议和离线文件行为的参考入口：
 
-稳定调用的公开入口包括：
+- `Market`：深市为 `0`，沪市为 `1`；
+- `KlineCategory.DAY`：值为 `4`；
+- `get_security_list_all()`：按市场、每页最多 1000 条取得证券列表；
+- `get_security_bars(market, code, DAY, start, count)`：单次最多请求 800 根日线，`start=0` 为最新窗口；
+- `.day`：小端序 32 字节记录，字段依次为 `YYYYMMDD`、开高低收整数、成交额 float32、成交量整数和保留字段。
 
-```python
-from easy_tdx import KlineCategory, Market, TdxClient
-from easy_tdx.offline import find_daily_bar_file, read_daily_bars, resolve_vipdoc
-from easy_tdx import MyTT
-from easy_tdx.backtest import BacktestEngine, BacktestResult, Strategy
-```
+## 2. 项目内置的最小实现
 
-同步行情客户端公开提供 `TdxClient.connect()`、`close()`、`get_security_count()`、`get_security_list()`、`get_security_list_all()` 和 `get_security_bars()`；异步版本对应 `AsyncTdxClient`。本项目的行情同步服务使用同步客户端获取日线，公式扫描仍然读取已经落地的本地文件。
+所有实现位于 `selector_app/tdx_protocol/` 和 `selector_app/market_data/`：
 
-## 2. K 线字段和来源
+- `tdx_protocol.transport.TdxConnection`：TCP 建连、初始化帧、长度读取、压缩帧解包、超时和连接错误；
+- `tdx_protocol.commands`：证券数量、证券列表和日线请求构造；
+- `tdx_protocol.codec`：日期、价格变长整数、成交量自定义浮点和证券列表字段解码；
+- `tdx_protocol.client.TdxClient`：有限重试、已配置服务器故障转移、列表分页和日线 DataFrame 转换；
+- `market_data.day_format`：32 字节 `.day` 只读解析、证券类型判断、价格/成交量系数和临时 K 线状态；
+- `market_data.day_importer.LocalDayImporter`：文件指纹、全量/增量导入、错误保留旧数据和缺失标记；
+- `market_data.store.DuckDbMarketDataStore`：本地/在线来源优先级、批量查询、去重和 schema 状态。
 
-`TdxClient.get_security_bars(market, code, category, start, count=800, *, bar_time="start")` 返回 pandas DataFrame。`SecurityBar` 的字段为：
+响应处理有以下安全边界：
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `open`, `close`, `high`, `low` | `float` | 价格 |
-| `vol` | `float` | 成交量，A 股 `.day` 读取后为股 |
-| `amount` | `float` | 成交额，元 |
-| `year`, `month`, `day`, `hour`, `minute` | `int` | 时间组成字段，日线的时分为 0 |
-| `datetime_str` | `str` 属性 | `YYYY-MM-DD HH:MM` |
+1. 空 K 线 body 或只有数量头时返回空列表，让客户端继续尝试其它服务器；
+2. 响应声称的条数超过实际 body 时只返回已完整解码的前缀，不使用残缺记录；
+3. 帧长度、压缩长度或初始化帧损坏时转为连接错误，进入有限重试/故障转移；
+4. 指数日线每条记录的涨跌家数附加字段会被跳过，避免下一条记录错位。
 
-日线请求最多 800 根/次，`start=0` 表示最新分页。分钟线的 `bar_time` 对齐参数对日线不生效。
+## 3. `.day` 系数和证券类型
 
-## 3. `.day` 离线文件
+项目不把未知代码段按股票兜底。当前识别范围与已审计实现一致：
 
-已确认支持本地通达信日线文件：
+| 市场 | 类型 | 代码段 | 价格系数 | 成交量系数 |
+| --- | --- | --- | ---: | ---: |
+| SH | A 股 | 60、68 | 0.01 | 0.01 |
+| SH | B 股 | 90 | 0.001 | 0.01 |
+| SH | 指数 | 00、88、99 | 0.01 | 1.0 |
+| SH | 基金/ETF | 50、51、52、53、55、56、58 | 0.001 | 1.0 |
+| SH | 债券/回购 | 01、10、11、12、13、14、20 | 0.001 | 1.0 |
+| SZ | 股票/B 股 | 00、20、30 | 0.01 | 0.01 |
+| SZ | 指数 | 39 | 0.01 | 1.0 |
+| SZ | 基金/ETF | 15、16、17、18 | 0.001 | 0.01 |
+| SZ | 债券 | 10、11、12、13、14 | 0.001 | 1.0 |
 
-```text
-vipdoc/{sh,sz}/lday/{exchange}{code}.day
-```
+金额字段保持 `.day` 中的 float32 元值；价格不做复权。业务层使用统一的 `stock/fund/index/bond` 类型，并为非股票类型标记虚拟研究回测。
 
-公开调用为 `resolve_vipdoc()`、`find_daily_bar_file(market, code, vipdoc=None)` 和 `read_daily_bars(filepath)`；写入侧还提供 `append_daily_bars()` 与 `sync_daily_bars_from_security_bars()`。文件读取/写入使用 32 字节小端记录：`YYYYMMDD`、开盘、最高、最低、收盘、成交额、成交量及保留字段。上游根据文件名区分证券类型并使用价格/数量系数；本项目不重新实现该二进制编解码，而把上游的 `SecurityBar` 转换成项目自己的 DataFrame，写入时使用 A 股系数 `price_coeff=0.01`、`vol_coeff=0.01`。
+## 4. 明确不移植的能力
 
-本应用自己的 universe 过滤器只允许：
+项目没有移植或调用以下上游模块：
 
-- 上海 `60xxxx`、`68xxxx`；
-- 深圳 `00xxxx`、`30xxxx`。
+- Web 路由、CLI、MAC、分钟线、海外/扩展市场、资金流和财务数据；
+- 上游的 `SignalScanner`、策略对象、回测引擎、组合引擎和绩效分析器；
+- 上游离线写回 `.day` 的 append/sync API。
 
-因此 ETF、基金、指数、债券和北京市场不会被默默当成 A 股扫描。当前版本页面明确显示只支持 SH/SZ A 股。
+业务代码只接收项目自己的 `InstrumentRef`/`StockRef`、规范化 DataFrame、`MarketDataRepository` 和回测结果。在线同步直接写 DuckDB，本地导入才读取用户的 `.day`；任何运行时路径都不会修改源文件。
 
-## 4. MyTT 技术指标 API
+## 5. 升级/协议变更检查清单
 
-上游 `easy_tdx.MyTT` 提供本项目需要的 `REF`、`SMA`、`EMA`、`LLV`、`HHV`、`BARSLAST`、`COUNT`、`CROSS` 等数组函数。其实现基于 NumPy/pandas，函数返回与输入等长的 NumPy 数组；`REF` 首段产生 `NaN`，滚动窗口函数在预热段产生 `NaN`。
+若未来需要重新参考上游版本或 TDX 服务器行为，按以下顺序验证：
 
-本项目的 `selector_app/formulas/` 只把这些函数作为计算依赖，不把行情请求放进公式层。除零由本项目 `safe_divide()` 统一处理为 `NaN`，负分母保持符号；数据不足则被标记为 `skipped`。
-
-## 5. `SignalScanner`、Web 和 CLI 能力
-
-`from easy_tdx.screen import SignalScanner` 确实可直接调用，但它的契约是：接收 `Strategy` 子类，在本地 `.day` 文件上提取策略买入信号，并输出简化的 `ScanResult(code, market, signal_date, last_close)`。它不支持本需求的公式一/二/三信号注册、AND/OR/至少 N 个条件合并、指标值回传，因此本项目没有强行复用它。
-
-上游已有 FastAPI 路由、`easy-tdx` CLI 和一个用于回测的进程内任务执行器。它们分别属于上游应用层；本项目的公式任务需要另一套结果字段和本地公式 registry，所以只在本项目内部提供轻量任务执行器，并不让业务代码依赖上游 `easy_tdx.web.*` 内部模块。本项目的 `EasyTdxMarketSync` 已使用上游在线 `get_security_list_all()`/`get_security_bars()` 加上 `.day` 写入 API；公式选股仍只消费本地已经完成的日线。公式回测使用公开的 `BacktestEngine`、`Strategy` 和 `BacktestResult`，将本项目公式输出转换为逐日买卖信号，不调用上游私有回测接口。
-
-动态组合回测由本项目 `selector_app/portfolio_backtest/service.py` 自己实现候选筛选、指标排序、固定槽位和卖出后补位；上游 `PortfolioBacktestEngine` 只支持固定股票列表的独立回测，无法表达本项目需要的动态候选轮换，因此没有把它误用成组合调仓接口。组合绩效仍复用上游公开 `PerformanceAnalyzer`，交易执行规则（下一根开盘/收盘、100 股整数、费用和滑点）由本项目服务明确模拟。
-
-## 6. 本项目上游适配器和内部实现边界
-
-行情数据上游集成边界是 `selector_app/adapters/easy_tdx_adapter.py`，目前调用：
-
-- `easy_tdx.Market`；
-- `easy_tdx.offline.resolve_vipdoc`；
-- `easy_tdx.offline.find_daily_bar_file`；
-- `easy_tdx.offline.read_daily_bars`；
-- `easy_tdx.offline.get_last_bar_date`；
-- `easy_tdx.offline.sync_daily_bars_from_security_bars`；
-- `easy_tdx.TdxClient`、`Market`、`KlineCategory`、`SecurityBar`；
-- `easy_tdx.MyTT`（由公式层调用，但仍是上游公开模块）。
-- `easy_tdx.backtest.BacktestEngine`、`Strategy`、`BacktestResult`（由公式回测服务调用的公开交易/绩效 API）。
-- `easy_tdx.backtest.performance.PerformanceAnalyzer`（由动态组合回测服务调用的公开绩效 API）。
-
-公式回测的交易执行边界位于 `selector_app/backtest/service.py`，只接收项目自己的规范化 DataFrame 和公式信号，并将上游回测结果转换成项目 API 的 JSON 记录。
-
-动态组合回测的边界位于 `selector_app/portfolio_backtest/service.py`：它只接收项目自己的规范化 DataFrame、公式信号和公式值，负责候选排序、持仓槽位生命周期与成交记录，再把组合净值交给上游公开绩效分析器。它不依赖上游 `easy_tdx.backtest.portfolio_engine` 的私有实现。
-
-组合适配性过滤的累计历史决策位于 `selector_app/strategy_fitness/rolling.py`，只消费本项目已经生成的交易和净值记录，并通过严格小于当前信号日期的边界查询避免未来数据。它不是上游 easy-tdx 的新增 API。
-
-策略适配性评估的边界位于 `selector_app/strategy_fitness/service.py`：它缓存项目自己的规范化日线，按共同日期切分窗口，并调用本项目组合服务的单股票入口复用买卖与费用语义；它只使用上游公开指标计算和绩效分析能力，不引入新的上游私有 API。
-
-没有使用上游的 `_detect_security_type`、协议 command、transport、`easy_tdx.web` 路由或 `easy_tdx.screen.scanner` 私有实现。上游的 `SecurityBar` 只在适配器中被转换和写入，不会进入公式或 Web 路由。
-
-## 7. 升级兼容风险
-
-升级 `easy-tdx` 时重点检查：
-
-1. `SecurityBar` 字段名/单位、`.day` 价格和成交量系数；
-2. `read_daily_bars`、`find_daily_bar_file`、`resolve_vipdoc` 是否仍从 `easy_tdx.offline` 导出；
-3. `Market.SH/SZ` 与 `KlineCategory.DAY` 的枚举值；
-4. MyTT 中移动平均、交叉和滚动函数的 NaN/预热语义；
-5. pandas 版本上限与 Python 版本兼容性；
-6. 上游 CLI/Web/`SignalScanner` 的行为变化（本项目不把它们当作业务契约）。
-
-升级接受条件：修改 `pyproject.toml` 和 `requirements.lock` 后，重新审计本文件，运行新增 Python 测试、API 测试、前端 typecheck/build 和 E2E；只有全部通过才接受版本变更。
-
-## 8. 安装策略
-
-开发/生产均使用版本依赖，不提交本机绝对路径：
-
-```bash
-python -m pip install -r requirements.lock
-python -m pip install -e ".[dev]"
-```
-
-如果需要用源码 checkout 做 API 验证，应在独立虚拟环境中先构建上游自身的前端产物，再执行 `pip install -e <easy_tdx-checkout>`；不要把 `file:///...` 写进本项目的 `pyproject.toml` 或 lock 文件。CI 使用 PyPI 版本，测试夹具仅在本地存在并列源码时优先导入源码，便于发现上游漂移。
+1. 对照 `Market`、`KlineCategory.DAY`、请求包长度和字段偏移；
+2. 用固定 fixture 验证价格差分、指数附加字段、成交量自定义浮点和空/截断响应；
+3. 用 SH/SZ 股票、B 股、基金、指数和债券 `.day` fixture 验证系数；
+4. 验证本地优先、在线补缺和 provisional → completed 的状态转换；
+5. 运行 `pytest --cov=selector_app`、`ruff check selector_app tests`、`mypy selector_app` 和前端检查；
+6. 只在协议行为确认后修改 `tdx_protocol`，不要重新引入外部行情框架作为业务依赖。

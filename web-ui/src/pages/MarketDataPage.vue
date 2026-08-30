@@ -2,13 +2,24 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import { FormulaScreenApiError } from '../api/formulaScreen'
-import { fetchLocalChart, fetchLocalInstruments } from '../api/marketData'
+import {
+  createLocalImport,
+  createOnlineSync,
+  fetchLocalChart,
+  fetchLocalInstruments,
+  fetchStoreStatus,
+  getMarketDataJob,
+} from '../api/marketData'
 import type {
+  DataStoreStatus,
+  InstrumentBoard,
+  InstrumentType,
   LocalInstrument,
   LocalInstrumentMeta,
   LocalMarketChart,
   LocalMarketScope,
   MarketChartPeriod,
+  MarketSyncJobState,
 } from '../types'
 import MarketCandlestickChart from '../components/MarketCandlestickChart.vue'
 
@@ -19,8 +30,28 @@ const MA_OPTIONS = [
   { key: 'ma60', label: 'MA60' },
 ]
 
+const INSTRUMENT_TYPE_OPTIONS: { key: InstrumentType; label: string }[] = [
+  { key: 'stock', label: '股票/B股' },
+  { key: 'fund', label: '基金/ETF' },
+  { key: 'index', label: '指数' },
+  { key: 'bond', label: '债券' },
+]
+
+const BOARD_OPTIONS: { key: InstrumentBoard; label: string }[] = [
+  { key: 'main', label: '主板' },
+  { key: 'star', label: '科创板' },
+  { key: 'chinext', label: '创业板' },
+  { key: 'b_share', label: 'B股' },
+  { key: 'fund', label: '基金/ETF' },
+  { key: 'index', label: '指数' },
+  { key: 'bond', label: '债券' },
+]
+
 const form = reactive({
   vipdocPath: '/data/vipdoc',
+  syncUniverse: 'all' as 'all' | 'sh' | 'sz',
+  syncInstrumentTypes: [] as InstrumentType[],
+  syncBoards: [] as InstrumentBoard[],
   market: 'all' as LocalMarketScope,
   keyword: '',
   page: 1,
@@ -39,14 +70,132 @@ const showMacd = ref(true)
 const loading = ref(false)
 const chartLoading = ref(false)
 const message = ref('')
+const storeStatus = ref<DataStoreStatus | null>(null)
+const syncLoading = ref(false)
+const syncLabel = ref('')
+const marketJob = ref<MarketSyncJobState | null>(null)
 
 const selectedTitle = computed(() => (
-  selected.value ? `${selected.value.market} ${selected.value.code}` : '请选择股票'
+  selected.value ? `${selected.value.market} ${selected.value.code}` : '请选择品种'
 ))
 
 function apiMessage(error: unknown): string {
   if (error instanceof FormulaScreenApiError) return error.message
-  return '本地行情读取失败，请检查 vipdoc 数据目录后重试。'
+  return '行情数据读取失败，请检查数据导入状态后重试。'
+}
+
+function syncScopePayload(): {
+  instrument_types?: InstrumentType[]
+  boards?: InstrumentBoard[]
+} {
+  return {
+    ...(form.syncInstrumentTypes.length > 0
+      ? { instrument_types: [...form.syncInstrumentTypes] }
+      : {}),
+    ...(form.syncBoards.length > 0 ? { boards: [...form.syncBoards] } : {}),
+  }
+}
+
+function toggleInstrumentType(type: InstrumentType): void {
+  form.syncInstrumentTypes = form.syncInstrumentTypes.includes(type)
+    ? form.syncInstrumentTypes.filter((item) => item !== type)
+    : [...form.syncInstrumentTypes, type]
+}
+
+function toggleBoard(board: InstrumentBoard): void {
+  form.syncBoards = form.syncBoards.includes(board)
+    ? form.syncBoards.filter((item) => item !== board)
+    : [...form.syncBoards, board]
+}
+
+async function loadStoreStatus(): Promise<void> {
+  try {
+    storeStatus.value = await fetchStoreStatus()
+  } catch (error) {
+    message.value = apiMessage(error)
+  }
+}
+
+async function waitForJob(jobId: string): Promise<void> {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
+    const state = await getMarketDataJob(jobId)
+    marketJob.value = state
+    if (state.status === 'completed') {
+      if (state.result?.errors) {
+        message.value = `同步完成，但有 ${state.result.errors} 个错误。`
+      } else {
+        message.value = ''
+      }
+      return
+    }
+    if (state.status === 'failed') {
+      throw new FormulaScreenApiError(state.error ?? '行情同步失败。', 500)
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 100))
+  }
+  throw new FormulaScreenApiError('行情同步超时，请检查后台任务状态。', 504)
+}
+
+function beginJob(jobId: string, status: string): void {
+  marketJob.value = {
+    job_id: jobId,
+    status: status as MarketSyncJobState['status'],
+    progress: 0,
+    total_candidates: 0,
+    total_scanned: 0,
+    errors: 0,
+    error: null,
+    result: null,
+  }
+}
+
+async function importLocalData(): Promise<void> {
+  const vipdocPath = form.vipdocPath.trim()
+  if (!vipdocPath) {
+    message.value = '请输入通达信 vipdoc 数据目录。'
+    return
+  }
+  syncLoading.value = true
+  syncLabel.value = '正在导入本地行情…'
+  message.value = ''
+  try {
+    const job = await createLocalImport({
+      vipdoc_path: vipdocPath,
+      universe: form.syncUniverse,
+      ...syncScopePayload(),
+    })
+    beginJob(job.job_id, job.status)
+    await waitForJob(job.job_id)
+    await loadStoreStatus()
+    await loadInstruments()
+  } catch (error) {
+    message.value = apiMessage(error)
+  } finally {
+    syncLoading.value = false
+    syncLabel.value = ''
+  }
+}
+
+async function syncOnlineData(): Promise<void> {
+  syncLoading.value = true
+  syncLabel.value = '正在在线更新行情…'
+  message.value = ''
+  try {
+    const job = await createOnlineSync({
+      universe: form.syncUniverse,
+      bars: 800,
+      ...syncScopePayload(),
+    })
+    beginJob(job.job_id, job.status)
+    await waitForJob(job.job_id)
+    await loadStoreStatus()
+    await loadInstruments()
+  } catch (error) {
+    message.value = apiMessage(error)
+  } finally {
+    syncLoading.value = false
+    syncLabel.value = ''
+  }
 }
 
 async function loadInstruments(): Promise<void> {
@@ -54,7 +203,6 @@ async function loadInstruments(): Promise<void> {
   message.value = ''
   try {
     const response = await fetchLocalInstruments({
-      vipdoc_path: form.vipdocPath.trim() || undefined,
       market: form.market,
       keyword: form.keyword.trim() || undefined,
       page: form.page,
@@ -92,7 +240,6 @@ async function loadChart(instrument = selected.value): Promise<void> {
   chartLoading.value = true
   try {
     chart.value = await fetchLocalChart({
-      vipdoc_path: form.vipdocPath.trim() || undefined,
       market: instrument.market,
       code: instrument.code,
       period: period.value,
@@ -135,7 +282,14 @@ function formatPrice(value: number | null): string {
   return value === null ? '—' : value.toFixed(2)
 }
 
-onMounted(loadInstruments)
+onMounted(async () => {
+  await loadStoreStatus()
+  await loadInstruments()
+})
+
+function instrumentLabel(type: LocalInstrument['instrument_type']): string {
+  return { stock: '股票', fund: '基金/ETF', index: '指数', bond: '债券' }[type]
+}
 </script>
 
 <template>
@@ -154,30 +308,66 @@ onMounted(loadInstruments)
 
     <main class="content-shell">
       <section class="page-intro">
-        <div><p class="eyebrow">LOCAL MARKET DATA / CHART</p><h1>本地行情</h1><p class="intro-copy">直接浏览 vipdoc 中已经保存的行情，切换日线、月线、年线和常用技术指标。</p></div>
-        <div class="intro-note"><span class="note-label">数据边界</span><strong>只读本地文件</strong><small>不会上传行情；图表指标在服务端计算</small></div>
+        <div><p class="eyebrow">LOCAL MARKET DATA / DUCKDB</p><h1>本地行情</h1><p class="intro-copy">行情统一存储在本地 DuckDB，可从通达信 vipdoc 导入或在线更新。</p></div>
+        <div class="intro-note"><span class="note-label">数据边界</span><strong>本地 DuckDB</strong><small>源文件只读；图表、筛选和回测统一查询数据库</small></div>
       </section>
 
       <div v-if="message" class="notice error" role="alert" data-testid="market-data-message">{{ message }}</div>
 
+      <section class="panel market-store-panel" data-testid="market-store-panel">
+        <div class="panel-heading"><div><span class="section-kicker">00 / DATA STORE</span><h2>行情数据仓库</h2></div><span class="required-hint">{{ syncLabel || 'DuckDB' }}</span></div>
+        <div class="store-status-grid" data-testid="market-store-status">
+          <span>标的 {{ storeStatus?.instrument_count ?? 0 }}</span>
+          <span>K线 {{ storeStatus?.bar_count ?? 0 }}</span>
+          <span>区间 {{ storeStatus?.data_start ?? '—' }} → {{ storeStatus?.data_end ?? '—' }}</span>
+        </div>
+        <div class="store-meta" data-testid="market-store-meta">
+          <span>数据库 {{ storeStatus?.database_path ?? '—' }}</span>
+          <span>最近本地导入 {{ storeStatus?.last_local_import_at ?? '—' }}</span>
+          <span>最近在线更新 {{ storeStatus?.last_online_sync_at ?? '—' }}</span>
+        </div>
+        <div class="market-sync-form">
+          <label for="market-vipdoc-path">通达信 vipdoc 导入源</label>
+          <input id="market-vipdoc-path" v-model="form.vipdocPath" data-testid="market-vipdoc-path" type="text" placeholder="/data/vipdoc">
+          <div class="scope-config" data-testid="market-sync-scope">
+            <div><label for="market-sync-universe">同步市场</label><select id="market-sync-universe" v-model="form.syncUniverse" data-testid="market-sync-universe"><option value="all">沪深全部</option><option value="sh">仅上海</option><option value="sz">仅深圳</option></select></div>
+            <div class="scope-options"><span>证券类型</span><label v-for="option in INSTRUMENT_TYPE_OPTIONS" :key="option.key"><input type="checkbox" :data-testid="`market-sync-type-${option.key}`" :checked="form.syncInstrumentTypes.includes(option.key)" @change="toggleInstrumentType(option.key)">{{ option.label }}</label></div>
+            <div class="scope-options"><span>板块</span><label v-for="option in BOARD_OPTIONS" :key="option.key"><input type="checkbox" :data-testid="`market-sync-board-${option.key}`" :checked="form.syncBoards.includes(option.key)" @change="toggleBoard(option.key)">{{ option.label }}</label></div>
+            <small class="scope-helper">类型或板块未勾选表示不限制；两者同时选择时取交集。</small>
+          </div>
+          <div class="market-sync-actions">
+            <button class="primary-button" data-testid="market-import-local" type="button" :disabled="syncLoading" @click="importLocalData">{{ syncLoading ? syncLabel : '导入本地行情' }}</button>
+            <button class="secondary-button" data-testid="market-sync-online" type="button" :disabled="syncLoading" @click="syncOnlineData">在线更新行情</button>
+          </div>
+        </div>
+        <div v-if="marketJob" class="sync-progress" data-testid="market-data-progress">
+          <div class="sync-progress-heading"><span>{{ syncLoading ? syncLabel : '最近一次任务' }}</span><strong>{{ Math.round(marketJob.progress * 100) }}%</strong></div>
+          <div class="progress-track sync-progress-track"><span :style="{ width: `${Math.round(marketJob.progress * 100)}%` }"></span></div>
+          <div class="sync-progress-stats"><span>已处理 <strong>{{ marketJob.total_scanned }}</strong> / {{ marketJob.total_candidates }}</span><span :class="{ negative: marketJob.errors > 0 }">错误 <strong>{{ marketJob.errors }}</strong></span></div>
+          <div v-if="marketJob.result" class="sync-result-stats">
+            <template v-if="marketJob.result.source === 'local'"><span>导入文件 {{ marketJob.result.imported_files ?? 0 }}</span><span>替换标的 {{ marketJob.result.replaced_instruments ?? 0 }}</span><span>写入 K 线 {{ marketJob.result.imported_bars ?? 0 }}</span><span>跳过 {{ marketJob.result.skipped_files ?? 0 }}</span></template>
+            <template v-else><span>更新标的 {{ marketJob.result.updated_files }}</span><span>写入 K 线 {{ marketJob.result.written_bars }}</span><span>无变化 {{ marketJob.result.unchanged_files }}</span></template>
+            <span :class="{ negative: marketJob.result.errors > 0 }">失败 {{ marketJob.result.errors }}</span>
+          </div>
+        </div>
+      </section>
+
       <div class="market-data-grid">
         <section class="panel local-instruments-panel" data-testid="local-instruments">
-          <div class="panel-heading"><div><span class="section-kicker">01 / LOCAL FILES</span><h2>本地股票</h2></div><span class="required-hint">{{ listMeta?.total ?? 0 }} 个文件</span></div>
+          <div class="panel-heading"><div><span class="section-kicker">01 / INSTRUMENTS</span><h2>本地品种</h2></div><span class="required-hint">{{ listMeta?.total ?? 0 }} 个标的</span></div>
           <form class="market-filter-form" @submit.prevent="form.page = 1; loadInstruments()">
-            <label for="market-vipdoc-path">vipdoc 目录</label>
-            <input id="market-vipdoc-path" v-model="form.vipdocPath" data-testid="market-vipdoc-path" type="text" placeholder="/data/vipdoc">
             <div class="compact-fields">
-              <div><label for="market-scope">市场</label><select id="market-scope" v-model="form.market" data-testid="market-scope"><option value="all">沪深 A 股</option><option value="SH">仅上海</option><option value="SZ">仅深圳</option></select></div>
+              <div><label for="market-scope">市场</label><select id="market-scope" v-model="form.market" data-testid="market-scope"><option value="all">沪深全部品种</option><option value="SH">仅上海</option><option value="SZ">仅深圳</option></select></div>
               <div><label for="market-keyword">搜索代码</label><input id="market-keyword" v-model="form.keyword" data-testid="market-keyword" type="search" placeholder="例如 600000"></div>
             </div>
             <button class="secondary-button" data-testid="market-refresh" type="submit" :disabled="loading">{{ loading ? '读取中…' : '刷新本地列表' }}</button>
           </form>
 
-          <div v-if="!instruments.length" class="inline-empty" data-testid="market-instruments-empty">{{ loading ? '正在读取本地 .day 文件…' : '没有找到可读取的沪深 A 股行情文件。' }}</div>
+          <div v-if="!instruments.length" class="inline-empty" data-testid="market-instruments-empty">{{ loading ? '正在读取 DuckDB 行情…' : '数据库中暂无行情，请先导入本地数据。' }}</div>
           <div v-else class="local-instrument-list">
             <button v-for="instrument in instruments" :key="`${instrument.market}-${instrument.code}`" class="local-instrument" :class="{ selected: selected?.market === instrument.market && selected?.code === instrument.code }" :data-testid="`instrument-${instrument.market}-${instrument.code}`" type="button" @click="selectInstrument(instrument)">
               <span class="instrument-topline"><strong>{{ instrument.code }}</strong><span class="market-pill" :class="instrument.market.toLowerCase()">{{ instrument.market }}</span></span>
-              <span class="instrument-meta"><span>{{ instrument.bars ? `${instrument.bars} 根` : instrument.error ?? '无数据' }}</span><span>{{ instrument.last_close === null ? '—' : `¥${formatPrice(instrument.last_close)}` }}</span></span>
+              <span class="instrument-meta"><span>{{ instrumentLabel(instrument.instrument_type) }} · {{ instrument.bars ? `${instrument.bars} 根` : instrument.error ?? '无数据' }}</span><span>{{ instrument.last_close === null ? '—' : `¥${formatPrice(instrument.last_close)}` }}</span></span>
               <span class="instrument-range">{{ instrument.data_start ?? '—' }} → {{ instrument.data_end ?? '—' }}</span>
             </button>
           </div>
@@ -194,10 +384,10 @@ onMounted(loadInstruments)
             <div class="indicator-switches"><span>显示：</span><label v-for="option in MA_OPTIONS" :key="option.key"><input :data-testid="`toggle-${option.key}`" type="checkbox" :checked="maKeys.includes(option.key)" @change="toggleMa(option.key)">{{ option.label }}</label><label><input v-model="showRsi" data-testid="toggle-rsi" type="checkbox">RSI14</label><label><input v-model="showMacd" data-testid="toggle-macd" type="checkbox">MACD</label></div>
             <div v-if="chartLoading" class="chart-loading" data-testid="market-chart-loading">正在生成图表…</div>
             <MarketCandlestickChart v-else-if="chart" :candles="chart.candles" :ma-keys="maKeys" :period="period" :show-macd="showMacd" :show-rsi="showRsi" />
-            <div v-else class="market-chart-empty" data-testid="market-chart-empty">暂无该股票在所选区间内的行情数据。</div>
+            <div v-else class="market-chart-empty" data-testid="market-chart-empty">暂无该品种在所选区间内的行情数据。</div>
             <div v-if="chart" class="chart-data-summary" data-testid="market-chart-summary"><span>本地日线 {{ chart.total_daily_bars }} 根</span><span>当前 {{ chart.bars }} 根{{ period === 'daily' ? '日' : period === 'monthly' ? '月' : '年' }}线</span><span>可用区间 {{ chart.available_data_start }} → {{ chart.available_data_end }}</span></div>
           </template>
-          <div v-else class="market-chart-empty" data-testid="market-chart-empty">请选择股票生成 K 线图。</div>
+          <div v-else class="market-chart-empty" data-testid="market-chart-empty">请选择品种生成 K 线图。</div>
         </section>
       </div>
     </main>

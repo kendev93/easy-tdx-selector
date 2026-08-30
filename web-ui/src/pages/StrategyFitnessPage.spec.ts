@@ -86,7 +86,7 @@ describe('StrategyFitnessPage', () => {
     await flushPromises()
 
     expect(fitnessApi.createStrategyFitness).toHaveBeenCalledWith(expect.objectContaining({
-      vipdoc_path: '/data/vipdoc', selected_signals: ['indicator_three.prepare_rally'],
+      selected_signals: ['indicator_three.prepare_rally'],
       ranking_value: 'indicator_three.varo7', train_ratio: 0.6, validation_ratio: 0.2,
       min_trades: 5, max_test_drawdown: 0.3,
     }))
@@ -205,7 +205,6 @@ describe('StrategyFitnessPage', () => {
     await wrapper.get('[data-testid="fitness-ranking-value"]').setValue('')
     await wrapper.get('[data-testid="fitness-combine-mode"]').setValue('at_least')
     await wrapper.get('[data-testid="fitness-minimum-matches"]').setValue(0)
-    await wrapper.get('[data-testid="fitness-vipdoc-path"]').setValue('')
     await wrapper.get('[data-testid="fitness-start"]').setValue('2024-02-01')
     await wrapper.get('[data-testid="fitness-end"]').setValue('2024-01-01')
     await wrapper.get('[data-testid="fitness-train-ratio"]').setValue(0)

@@ -18,6 +18,11 @@ web-ui/playwright-report/
 data/vipdoc/*
 !data/vipdoc/.gitkeep
 
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+*.bak-*.duckdb
+
 .DS_Store
 *.log
 .env

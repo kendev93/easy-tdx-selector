@@ -1,11 +1,15 @@
 import { FormulaScreenApiError } from './formulaScreen'
 import type {
+  DataStoreStatus,
+  InstrumentBoard,
+  InstrumentType,
   LocalInstrument,
   LocalInstrumentMeta,
   LocalMarketChart,
   LocalMarketScope,
   MarketChartPeriod,
 } from '../types'
+import type { MarketSyncJobState, MarketSyncResult } from '../types'
 
 const API_BASE = '/api/v1/market-data'
 
@@ -13,8 +17,11 @@ interface ApiErrorPayload {
   error?: { message?: string }
 }
 
-async function request<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: { 'Content-Type': 'application/json' } })
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+  })
   const payload = (await response.json()) as T & ApiErrorPayload
   if (!response.ok) {
     throw new FormulaScreenApiError(
@@ -26,7 +33,6 @@ async function request<T>(url: string): Promise<T> {
 }
 
 export interface LocalInstrumentQuery {
-  vipdoc_path?: string
   market?: LocalMarketScope
   keyword?: string
   page?: number
@@ -37,7 +43,6 @@ export async function fetchLocalInstruments(
   query: LocalInstrumentQuery = {},
 ): Promise<{ items: LocalInstrument[]; meta: LocalInstrumentMeta }> {
   const params = new URLSearchParams()
-  if (query.vipdoc_path) params.set('vipdoc_path', query.vipdoc_path)
   if (query.market) params.set('market', query.market)
   if (query.keyword) params.set('keyword', query.keyword)
   if (query.page) params.set('page', String(query.page))
@@ -50,7 +55,6 @@ export async function fetchLocalInstruments(
 }
 
 export interface LocalChartQuery {
-  vipdoc_path?: string
   market: 'SH' | 'SZ'
   code: string
   period?: MarketChartPeriod
@@ -60,7 +64,6 @@ export interface LocalChartQuery {
 
 export async function fetchLocalChart(query: LocalChartQuery): Promise<LocalMarketChart> {
   const params = new URLSearchParams()
-  if (query.vipdoc_path) params.set('vipdoc_path', query.vipdoc_path)
   if (query.period) params.set('period', query.period)
   if (query.start_date) params.set('start_date', query.start_date)
   if (query.end_date) params.set('end_date', query.end_date)
@@ -70,3 +73,43 @@ export async function fetchLocalChart(query: LocalChartQuery): Promise<LocalMark
   )
   return response.data
 }
+
+export async function fetchStoreStatus(): Promise<DataStoreStatus> {
+  const response = await request<{ data: DataStoreStatus }>(`${API_BASE}/store`)
+  return response.data
+}
+
+export async function createLocalImport(payload: {
+  vipdoc_path: string
+  universe?: LocalMarketScope
+  instrument_types?: InstrumentType[]
+  boards?: InstrumentBoard[]
+}): Promise<{ job_id: string; status: string }> {
+  const response = await request<{ data: { job_id: string; status: string } }>(
+    `${API_BASE}/import-local`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  )
+  return response.data
+}
+
+export async function createOnlineSync(payload: {
+  universe?: 'all' | 'sh' | 'sz'
+  bars?: number
+  instrument_types?: InstrumentType[]
+  boards?: InstrumentBoard[]
+} = {}): Promise<{ job_id: string; status: string }> {
+  const response = await request<{ data: { job_id: string; status: string } }>(
+    `${API_BASE}/sync-online`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  )
+  return response.data
+}
+
+export async function getMarketDataJob(jobId: string): Promise<MarketSyncJobState> {
+  const response = await request<{ data: MarketSyncJobState }>(
+    `${API_BASE}/jobs/${encodeURIComponent(jobId)}`,
+  )
+  return response.data
+}
+
+export type MarketDataImportResult = MarketSyncResult

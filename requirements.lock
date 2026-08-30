@@ -1,11 +1,11 @@
 # Runtime lock generated from the Python 3.12 container build.
 # Keep transitive pins here so Docker/CI do not silently drift; change this
-# file only as part of the documented easy-tdx upgrade procedure.
+# file only as part of the documented dependency upgrade procedure.
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.14.2
 click==8.4.2
-easy-tdx==1.20.8
+duckdb==1.5.5
 fastapi==0.135.1
 h11==0.16.0
 idna==3.19

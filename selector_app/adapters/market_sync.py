@@ -1,52 +1,37 @@
-"""Online TDX market-data synchronizer for the shared ``vipdoc`` directory.
-
-All upstream imports and format conversion live here.  The rest of the app sees
-only ``MarketSyncConfig`` and ``MarketSyncReport``.  A sync probes one latest bar
-per existing file first; a full 800-bar request is made only when the server has
-new completed data, preventing repeated bulk downloads on every sync.
-"""
+"""Online TDX daily-bar synchronization into the project's DuckDB store."""
 
 from __future__ import annotations
 
-import logging
-import os
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from threading import Lock
 from typing import Literal, Protocol, cast
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from easy_tdx import KlineCategory, Market, SecurityBar, TdxClient
-from easy_tdx.offline import (
-    encode_daily_bar,
-    find_daily_bar_file,
-    get_last_bar_date,
-    sync_daily_bars_from_security_bars,
-)
 
-from .easy_tdx_adapter import MarketCode, is_supported_a_stock
-
-logger = logging.getLogger(__name__)
+from selector_app.market_data.day_format import classify_board, classify_instrument
+from selector_app.market_data.models import InstrumentBoard, InstrumentType, MarketCode
+from selector_app.market_data.scope import InstrumentScope
+from selector_app.market_data.store import DuckDbMarketDataStore
+from selector_app.tdx_protocol.client import TdxClient
+from selector_app.tdx_protocol.types import KlineCategory, Market
 
 SyncUniverse = Literal["all", "sh", "sz"]
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
-_MARKET_PRICE_COEFFICIENT = 0.01
-_MARKET_VOLUME_COEFFICIENT = 0.01
 _LATEST_PROBE_BARS = 2
 
 
 @dataclass(frozen=True)
 class MarketSyncConfig:
-    """Config for one online-to-vipdoc synchronization run."""
+    """Configuration for one online-to-DuckDB synchronization run."""
 
-    vipdoc_path: str | Path = "/data/vipdoc"
     universe: SyncUniverse = "all"
     bars: int = 800
     timeout: float = 30.0
+    instrument_types: tuple[InstrumentType, ...] | None = None
+    boards: tuple[InstrumentBoard, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.universe not in {"all", "sh", "sz"}:
@@ -55,10 +40,13 @@ class MarketSyncConfig:
             raise ValueError("每只股票同步的 K 线数量必须在 1 到 800 之间")
         if self.timeout <= 0:
             raise ValueError("行情服务器超时时间必须大于 0")
-
-    @property
-    def root(self) -> Path:
-        return Path(self.vipdoc_path).expanduser()
+        scope = InstrumentScope.from_values(
+            universe=self.universe,
+            instrument_types=self.instrument_types,
+            boards=self.boards,
+        )
+        object.__setattr__(self, "instrument_types", scope.instrument_types)
+        object.__setattr__(self, "boards", scope.boards)
 
 
 @dataclass(frozen=True)
@@ -73,6 +61,7 @@ class MarketSyncReport:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "source": "online",
             "total_candidates": self.total_candidates,
             "processed": self.processed,
             "updated_files": self.updated_files,
@@ -92,9 +81,9 @@ class TdxMarketClient(Protocol):
 
     def get_security_bars(
         self,
-        market: Market,
+        market: object,
         code: str,
-        category: KlineCategory,
+        category: object,
         start: int,
         count: int,
     ) -> pd.DataFrame: ...
@@ -105,58 +94,55 @@ ProgressCallback = Callable[[int, int], None]
 
 
 def _default_client(timeout: float) -> TdxMarketClient:
-    """Adapt easy-tdx's concrete client to the app-owned protocol."""
-
     return cast(TdxMarketClient, TdxClient.from_best_host(timeout=timeout))
 
 
-class EasyTdxMarketSync:
-    """Fetch completed daily bars and append them in TDX ``.day`` format."""
+class TdxMarketSync:
+    """Fetch online daily bars and write them only to DuckDB.
+
+    The implementation and client are project-owned; the old class name below
+    remains as a compatibility alias for embedders of the first release.
+    """
 
     def __init__(
         self,
+        store: DuckDbMarketDataStore | None = None,
         client_factory: ClientFactory | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        self._store = store or DuckDbMarketDataStore()
         self._client_factory = client_factory
         self._clock = clock or (lambda: datetime.now(_SHANGHAI_TZ))
-        self._write_lock = Lock()
 
     def sync(
         self,
         config: MarketSyncConfig,
         progress_callback: ProgressCallback | None = None,
     ) -> MarketSyncReport:
-        root = config.root
-        if not root.is_dir():
-            raise ValueError(f"vipdoc 目录不存在或不是目录: {root}")
-
         failure_reasons: Counter[str] = Counter()
         processed = 0
         updated_files = 0
         unchanged_files = 0
         written_bars = 0
-
-        factory: ClientFactory = self._client_factory or _default_client
+        factory = self._client_factory or _default_client
         with factory(config.timeout) as client:
-            targets = self._list_targets(client, config.universe)
+            targets = self._list_targets(client, config)
             total = len(targets)
-            for index, (market, code) in enumerate(targets, start=1):
+            for index, (market, code, instrument_type, board) in enumerate(targets, start=1):
                 try:
-                    written = self._sync_one(client, market, code, config)
+                    written = self._sync_one(client, market, code, instrument_type, board, config)
                     if written > 0:
                         updated_files += 1
                         written_bars += written
                     else:
                         unchanged_files += 1
-                except Exception as exc:  # noqa: BLE001 - isolate one security
-                    reason = str(exc) or type(exc).__name__
+                except Exception as exc:  # noqa: BLE001 - isolate one instrument
+                    reason = str(exc).strip()[:200] or type(exc).__name__
                     failure_reasons[reason] += 1
-                    logger.warning("行情同步失败 %s%s: %s", market.name, code, reason)
                 processed += 1
                 if progress_callback is not None:
                     progress_callback(processed, total)
-
+        self._store.set_meta("last_online_sync_at", self._clock().isoformat())
         return MarketSyncReport(
             total_candidates=total,
             processed=processed,
@@ -170,192 +156,192 @@ class EasyTdxMarketSync:
     def _list_targets(
         self,
         client: TdxMarketClient,
-        universe: SyncUniverse,
-    ) -> list[tuple[Market, str]]:
+        config: MarketSyncConfig,
+    ) -> list[tuple[MarketCode, str, InstrumentType, InstrumentBoard]]:
         frame = client.get_security_list_all(pages="all")
         if frame.empty:
             return []
-        allowed_markets = {
-            "all": {Market.SH, Market.SZ},
-            "sh": {Market.SH},
-            "sz": {Market.SZ},
-        }[universe]
-        targets: list[tuple[Market, str]] = []
-        seen: set[tuple[Market, str]] = set()
+        scope = InstrumentScope.from_values(
+            universe=config.universe,
+            instrument_types=config.instrument_types,
+            boards=config.boards,
+        )
+        targets: list[tuple[MarketCode, str, InstrumentType, InstrumentBoard]] = []
+        seen: set[tuple[MarketCode, str]] = set()
         for row in frame.to_dict(orient="records"):
             market = _to_market(row.get("market"))
-            code = str(row.get("code", "")).strip().zfill(6)
-            if market not in allowed_markets:
+            raw_code = str(row.get("code", "")).strip()
+            if not raw_code.isdigit() or not 1 <= len(raw_code) <= 6:
                 continue
-            market_code: MarketCode = "SH" if market == Market.SH else "SZ"
-            if not is_supported_a_stock(market_code, code):
+            code = raw_code.zfill(6)
+            if market is None:
                 continue
-            target = (market, code)
-            if target not in seen:
-                seen.add(target)
-                targets.append(target)
+            instrument_type = classify_instrument(market, code)
+            board = classify_board(market, code)
+            if instrument_type is None or board is None:
+                continue
+            if not scope.matches(market, instrument_type, board):
+                continue
+            key = (market, code)
+            if key not in seen:
+                seen.add(key)
+                targets.append((key[0], code, instrument_type, board))
         return targets
 
     def _sync_one(
         self,
         client: TdxMarketClient,
-        market: Market,
+        market: MarketCode,
         code: str,
+        instrument_type: InstrumentType,
+        board: InstrumentBoard,
         config: MarketSyncConfig,
     ) -> int:
-        filepath = find_daily_bar_file(market, code, config.root)
-        _ensure_safe_target(config.root, filepath)
-        last_date = get_last_bar_date(filepath)
-
-        if last_date is None:
-            frame = client.get_security_bars(market, code, KlineCategory.DAY, 0, config.bars)
+        existing = self._store.read_bars(market, code, include_provisional=True)
+        if existing.empty:
+            frame = client.get_security_bars(
+                _market_enum(market), code, KlineCategory.DAY, 0, config.bars
+            )
         else:
-            # Before the close, the newest server row can be today's provisional
-            # bar. Fetch one extra row so yesterday's completed bar is still
-            # discoverable and missing data is not left behind until tomorrow.
             latest = client.get_security_bars(
-                market,
-                code,
-                KlineCategory.DAY,
-                0,
-                _LATEST_PROBE_BARS,
+                _market_enum(market), code, KlineCategory.DAY, 0, _LATEST_PROBE_BARS
             )
-            latest_bars = _dataframe_to_completed_bars(latest, now=self._clock())
-            if not latest_bars or _bar_date_int(latest_bars[-1]) <= last_date:
-                if (
-                    latest_bars
-                    and _is_current_day_after_close(latest_bars[-1], now=self._clock())
-                    and _bar_date_int(latest_bars[-1]) == last_date
-                ):
-                    return self._replace_last_bar(filepath, latest_bars[-1])
+            latest_frame = _normalize_online_frame(
+                latest,
+                market=market,
+                code=code,
+                instrument_type=instrument_type,
+                board=board,
+                now=self._clock(),
+            )
+            if not _has_new_online_data(existing, latest_frame):
                 return 0
-            frame = client.get_security_bars(market, code, KlineCategory.DAY, 0, config.bars)
-
-        bars = _dataframe_to_completed_bars(frame, now=self._clock())
-        if not bars:
+            frame = client.get_security_bars(
+                _market_enum(market), code, KlineCategory.DAY, 0, config.bars
+            )
+        normalized = _normalize_online_frame(
+            frame,
+            market=market,
+            code=code,
+            instrument_type=instrument_type,
+            board=board,
+            now=self._clock(),
+        )
+        if normalized.empty:
             return 0
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-        with self._write_lock:
-            written = sync_daily_bars_from_security_bars(
-                filepath,
-                bars,
-                price_coeff=_MARKET_PRICE_COEFFICIENT,
-                vol_coeff=_MARKET_VOLUME_COEFFICIENT,
-            )
-        return int(written)
-
-    def _replace_last_bar(self, filepath: Path, bar: SecurityBar) -> int:
-        """Replace a same-day provisional bar with the completed close."""
-
-        with self._write_lock:
-            # The public writer repairs a possible partial tail before the raw
-            # fixed-size replacement below; it receives no new bars by design.
-            sync_daily_bars_from_security_bars(
-                filepath,
-                [],
-                price_coeff=_MARKET_PRICE_COEFFICIENT,
-                vol_coeff=_MARKET_VOLUME_COEFFICIENT,
-            )
-            encoded = encode_daily_bar(
-                bar,
-                price_coeff=_MARKET_PRICE_COEFFICIENT,
-                vol_coeff=_MARKET_VOLUME_COEFFICIENT,
-            )
-            with filepath.open("r+b") as handle:
-                handle.seek(-len(encoded), os.SEEK_END)
-                handle.write(encoded)
-                handle.flush()
-                os.fsync(handle.fileno())
-        return 1
+        written, _updated = self._store.upsert_online_bars(normalized)
+        return written
 
 
-def _to_market(value: object) -> Market | None:
+def _to_market(value: object) -> MarketCode | None:
     if isinstance(value, Market):
-        return value if value in {Market.SH, Market.SZ} else None
+        return "SH" if value is Market.SH else "SZ"
     if isinstance(value, str):
         normalized = value.upper().strip()
-        if normalized == "SH":
-            return Market.SH
-        if normalized == "SZ":
-            return Market.SZ
-    if not isinstance(value, (int, float)):
-        return None
-    try:
-        market = Market(int(value))
-    except (ValueError, OverflowError):
-        return None
-    return market if market in {Market.SH, Market.SZ} else None
+        return cast(MarketCode, normalized) if normalized in {"SH", "SZ"} else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        mapping: dict[int, MarketCode] = {0: "SZ", 1: "SH"}
+        return mapping.get(int(value))
+    name = getattr(value, "name", None)
+    if isinstance(name, str) and name.upper() in {"SH", "SZ"}:
+        return cast(MarketCode, name.upper())
+    return None
 
 
-def _dataframe_to_completed_bars(
+def _market_enum(value: MarketCode) -> Market:
+    return Market.SH if value == "SH" else Market.SZ
+
+
+def _normalize_online_frame(
     frame: pd.DataFrame,
     *,
-    now: datetime | None = None,
-) -> list[SecurityBar]:
+    market: MarketCode,
+    code: str,
+    instrument_type: InstrumentType,
+    board: InstrumentBoard,
+    now: datetime,
+) -> pd.DataFrame:
     if frame.empty:
-        return []
+        return pd.DataFrame(
+            columns=["date", "open", "high", "low", "close", "volume", "amount", "bar_status"]
+        )
     volume_column = "vol" if "vol" in frame.columns else "volume"
     required = {"open", "high", "low", "close", "amount", volume_column}
     if not required.issubset(frame.columns):
         missing = sorted(required - set(frame.columns))
         raise ValueError(f"在线 K 线响应缺少字段: {', '.join(missing)}")
-    bars: list[SecurityBar] = []
-    for row in frame.to_dict(orient="records"):
-        timestamp = _row_timestamp(row)
-        if _is_unfinished_today(timestamp, now=now):
-            continue
-        bars.append(
-            SecurityBar(
-                open=float(row["open"]),
-                close=float(row["close"]),
-                high=float(row["high"]),
-                low=float(row["low"]),
-                vol=float(row[volume_column]),
-                amount=float(row["amount"]),
-                year=timestamp.year,
-                month=timestamp.month,
-                day=timestamp.day,
-                hour=0,
-                minute=0,
-            )
+    dates = pd.to_datetime(
+        frame["date"] if "date" in frame.columns else frame.apply(_row_timestamp, axis=1),
+        errors="coerce",
+    )
+    if dates.isna().any():
+        raise ValueError("在线 K 线响应包含无效日期")
+    current = now if now.tzinfo is not None else now.replace(tzinfo=_SHANGHAI_TZ)
+    current = current.astimezone(_SHANGHAI_TZ)
+    normalized = pd.DataFrame(
+        {
+            "date": dates,
+            "open": pd.to_numeric(frame["open"], errors="coerce"),
+            "high": pd.to_numeric(frame["high"], errors="coerce"),
+            "low": pd.to_numeric(frame["low"], errors="coerce"),
+            "close": pd.to_numeric(frame["close"], errors="coerce"),
+            "volume": pd.to_numeric(frame[volume_column], errors="coerce"),
+            "amount": pd.to_numeric(frame["amount"], errors="coerce"),
+        }
+    )
+    if normalized.iloc[:, 1:].isna().any().any():
+        raise ValueError("在线 K 线响应包含无效数值")
+    normalized["bar_status"] = normalized["date"].map(
+        lambda value: (
+            "provisional"
+            if value.date() == current.date() and (current.hour, current.minute) < (15, 5)
+            else "completed"
         )
-    return sorted(bars, key=_bar_date_int)
+    )
+    normalized["market"] = market
+    normalized["code"] = code
+    normalized["instrument_type"] = instrument_type
+    normalized["board"] = board
+    return (
+        normalized.sort_values("date", kind="stable")
+        .drop_duplicates(subset=["date"], keep="last")
+        .reset_index(drop=True)
+    )
 
 
-def _row_timestamp(row: Mapping[str, object]) -> pd.Timestamp:
-    if "date" in row:
-        return pd.Timestamp(row["date"])
-    if {"year", "month", "day"}.issubset(row):
-        return pd.Timestamp(
-            year=_as_int(row["year"]),
-            month=_as_int(row["month"]),
-            day=_as_int(row["day"]),
-        )
+def _row_timestamp(row: pd.Series) -> object:
+    if {"year", "month", "day"}.issubset(row.index):
+        return pd.Timestamp(year=int(row["year"]), month=int(row["month"]), day=int(row["day"]))
     raise ValueError("在线 K 线响应缺少日期字段")
 
 
-def _is_unfinished_today(timestamp: pd.Timestamp, *, now: datetime | None = None) -> bool:
-    current = now or datetime.now(_SHANGHAI_TZ)
-    return timestamp.date() == current.date() and (current.hour, current.minute) < (15, 5)
+def _has_new_online_data(existing: pd.DataFrame, latest: pd.DataFrame) -> bool:
+    if latest.empty:
+        return False
+    if existing.empty:
+        return True
+    existing_by_date = {
+        pd.Timestamp(row.date).date(): row for row in existing.itertuples(index=False)
+    }
+    for row in latest.itertuples(index=False):
+        current_date = pd.Timestamp(row.date).date()
+        previous = existing_by_date.get(current_date)
+        if previous is None:
+            return True
+        if row.bar_status != previous.bar_status:
+            return True
+        for column in ("open", "high", "low", "close", "volume", "amount"):
+            if float(getattr(row, column)) != float(getattr(previous, column)):
+                return True
+    return False
 
 
-def _is_current_day_after_close(bar: SecurityBar, *, now: datetime) -> bool:
-    timestamp = pd.Timestamp(year=bar.year, month=bar.month, day=bar.day)
-    return timestamp.date() == now.date() and not _is_unfinished_today(timestamp, now=now)
+EasyTdxMarketSync = TdxMarketSync
 
-
-def _bar_date_int(bar: SecurityBar) -> int:
-    return int(bar.year) * 10000 + int(bar.month) * 100 + int(bar.day)
-
-
-def _as_int(value: object) -> int:
-    if isinstance(value, (int, float, str)):
-        return int(value)
-    raise ValueError("在线 K 线日期字段类型无效")
-
-
-def _ensure_safe_target(root: Path, filepath: Path) -> None:
-    root_resolved = root.resolve()
-    target_resolved = filepath.resolve()
-    if not target_resolved.is_relative_to(root_resolved):
-        raise ValueError("行情文件路径超出 vipdoc 目录范围")
+__all__ = [
+    "EasyTdxMarketSync",
+    "MarketSyncConfig",
+    "MarketSyncReport",
+    "TdxMarketClient",
+    "TdxMarketSync",
+]

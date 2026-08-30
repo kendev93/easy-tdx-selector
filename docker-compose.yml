@@ -5,10 +5,14 @@ services:
       dockerfile: Dockerfile
     environment:
       PYTHONUNBUFFERED: "1"
+      SELECTOR_DATA_DIR: /data/market
     volumes:
       - type: volume
         source: vipdoc_data
         target: /data/vipdoc
+      - type: volume
+        source: market_data
+        target: /data/market
     expose:
       - "8000"
     ports:
@@ -29,3 +33,5 @@ services:
 volumes:
   vipdoc_data:
     name: easy_tdx_selector_vipdoc
+  market_data:
+    name: easy_tdx_selector_market

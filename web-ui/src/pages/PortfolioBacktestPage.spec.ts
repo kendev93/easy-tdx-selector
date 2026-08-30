@@ -88,12 +88,11 @@ describe('PortfolioBacktestPage', () => {
     const wrapper = mount(PortfolioBacktestPage)
     await flushPromises()
 
-    await wrapper.get('[data-testid="portfolio-vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="portfolio-config"]').trigger('submit')
     await flushPromises()
 
     expect(portfolioApi.createPortfolioBacktest).toHaveBeenCalledWith(expect.objectContaining({
-      vipdoc_path: '/data/vipdoc', selected_signals: ['indicator_three.prepare_rally'],
+      selected_signals: ['indicator_three.prepare_rally'],
       ranking_value: 'indicator_three.varo7', max_positions: 5, stop_loss_pct: 0.08,
     }))
     expect(wrapper.get('[data-testid="portfolio-results"]').text()).toContain('12.00%')

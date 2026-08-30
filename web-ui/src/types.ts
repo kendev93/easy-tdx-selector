@@ -7,6 +7,8 @@ export type PortfolioRankOrder = 'asc' | 'desc'
 export type PortfolioRebalanceFrequency = 'daily' | 'weekly' | 'monthly'
 export type PortfolioSellValueOperator = 'gte' | 'lte'
 export type PortfolioCompareOperator = 'gt' | 'gte' | 'lt' | 'lte'
+export type InstrumentType = 'stock' | 'fund' | 'index' | 'bond'
+export type InstrumentBoard = 'main' | 'star' | 'chinext' | 'b_share' | 'fund' | 'index' | 'bond'
 
 export interface SignalDefinition {
   id: string
@@ -68,7 +70,8 @@ export interface ScreenFormState {
   minimumMatches: number | null
   universe: Universe
   universeFile: string
-  vipdocPath: string
+  instrumentTypes: InstrumentType[]
+  boards: InstrumentBoard[]
   workers: number
   period: 'daily'
   formulaText: string
@@ -81,11 +84,12 @@ export interface ScanPayload {
   minimum_matches: number | null
   universe: Universe
   universe_file: string | null
-  vipdoc_path: string
   workers: number
   period: 'daily'
   formula_text: string | null
   formula_parameters: Record<string, number>
+  instrument_types?: InstrumentType[]
+  boards?: InstrumentBoard[]
 }
 
 export interface JobState {
@@ -101,13 +105,23 @@ export interface JobState {
 }
 
 export interface MarketSyncResult {
-  total_candidates: number
-  processed: number
-  updated_files: number
-  unchanged_files: number
-  written_bars: number
-  errors: number
-  failure_reasons: Record<string, number>
+  source?: 'local' | 'online'
+  discovered_files?: number
+  imported_files?: number
+  updated_files?: number
+  unchanged_files?: number
+  skipped_files?: number
+  missing_files?: number
+  imported_instruments?: number
+  replaced_instruments?: number
+  imported_bars?: number
+  provisional_bars?: number
+  filtered_files?: number
+  total_candidates?: number
+  processed?: number
+  written_bars?: number
+  errors?: number
+  failure_reasons?: Record<string, number>
 }
 
 export interface MarketSyncJobState {
@@ -121,12 +135,25 @@ export interface MarketSyncJobState {
   result: MarketSyncResult | null
 }
 
+export interface DataStoreStatus {
+  database_path: string
+  schema_version: number
+  instrument_count: number
+  bar_count: number
+  data_start: string | null
+  data_end: string | null
+  last_local_import_at: string | null
+  last_online_sync_at: string | null
+}
+
 export type LocalMarketScope = 'all' | 'SH' | 'SZ'
 export type MarketChartPeriod = 'daily' | 'monthly' | 'yearly'
 
 export interface LocalInstrument {
   market: 'SH' | 'SZ'
   code: string
+  instrument_type: InstrumentType
+  board?: InstrumentBoard
   bars: number
   data_start: string | null
   data_end: string | null
@@ -172,6 +199,8 @@ export interface LocalMarketChart {
 export interface ScreenResult {
   market: string
   code: string
+  instrument_type?: InstrumentType
+  board?: InstrumentBoard
   signal_date: number
   last_close: number
   matched_signals: string[]
@@ -192,7 +221,6 @@ export interface ResultsMeta {
 export interface BacktestPayload {
   market: 'SH' | 'SZ'
   code: string
-  vipdoc_path: string
   buy_signal: string
   sell_signal: string
   formula_text?: string | null
@@ -250,7 +278,7 @@ export interface BacktestResult {
   equity_curve: BacktestEquityPoint[]
   trades: BacktestTrade[]
   positions: BacktestPosition[]
-  configuration: Record<string, number | string | null>
+  configuration: Record<string, number | string | boolean | null>
   diagnostic: string | null
 }
 
@@ -266,9 +294,10 @@ export interface BacktestJobState {
 }
 
 export interface PortfolioBacktestPayload {
-  vipdoc_path: string
   universe: Universe
   universe_file?: string | null
+  instrument_types?: InstrumentType[]
+  boards?: InstrumentBoard[]
   selected_signals: string[]
   combine_mode: CombineMode
   minimum_matches: number | null

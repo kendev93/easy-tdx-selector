@@ -20,7 +20,6 @@ test('user can configure a formula scan, view results, and export them', async (
   await page.route('**/api/v1/formula-screen/jobs/e2e-job/results', (route) => route.fulfill({ json: { data: [{ market: 'SH', code: '600000', signal_date: 20260824, last_close: 12.35, matched_signals: ['indicator_three.accumulation_zone'], match_count: 1, indicator_values: { 'indicator_three.varo7': 2.2 } }], meta: { total_candidates: 1, total_scanned: 1, total_signals: 1, errors: 0, skipped: 0, failure_reasons: {}, skip_reasons: {} } } }))
 
   await page.goto('/formula-screen')
-  await page.getByTestId('vipdoc-path').fill('/tmp/vipdoc')
   await page.getByTestId('signal-indicator_three.prepare_rally').check()
   await page.getByTestId('signal-indicator_three.accumulation_zone').check()
   await page.getByTestId('advanced-toggle').click()
@@ -49,7 +48,6 @@ test('user can parse a custom formula and scan with an overridden parameter', as
   await page.getByTestId('parse-formula').click()
   await expect(page.getByTestId('custom-formula-meta')).toContainText('1 个参数')
   await page.getByTestId('formula-param-N').fill('7')
-  await page.getByTestId('vipdoc-path').fill('/tmp/vipdoc')
   await page.getByTestId('advanced-toggle').click()
   await page.getByTestId('minimum-matches').fill('1')
   await page.getByTestId('start-scan').click()
@@ -57,7 +55,7 @@ test('user can parse a custom formula and scan with an overridden parameter', as
   await expect(page.getByTestId('results-table')).toContainText('600001')
 })
 
-test('user can sync latest market data from the shared vipdoc', async ({ page }) => {
+test('user can sync latest market data into DuckDB', async ({ page }) => {
   await page.route('**/api/v1/formula-screen/metadata', (route) => route.fulfill({ json: { data: metadata } }))
   await page.route('**/api/v1/market-data/sync', (route) => route.fulfill({ status: 202, json: { data: { job_id: 'sync-job', status: 'queued' } } }))
   await page.route('**/api/v1/market-data/sync/jobs/sync-job', (route) => route.fulfill({ json: { data: { job_id: 'sync-job', status: 'completed', progress: 1, total_candidates: 2, total_scanned: 2, errors: 0, error: null, result: { total_candidates: 2, processed: 2, updated_files: 2, unchanged_files: 0, written_bars: 4, errors: 0, failure_reasons: {} } } } }))

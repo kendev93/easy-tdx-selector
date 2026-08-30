@@ -4,10 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from easy_tdx import SecurityBar
-from easy_tdx.offline import append_daily_bars
-
 from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, StockRef
+from tests.day_helpers import write_day_records
 
 
 def touch(path: Path) -> None:
@@ -15,7 +13,7 @@ def touch(path: Path) -> None:
     path.write_bytes(b"")
 
 
-def test_adapter_lists_only_shenzhen_and_shanghai_a_stock_files(tmp_path: Path) -> None:
+def test_adapter_lists_all_known_shenzhen_and_shanghai_day_files(tmp_path: Path) -> None:
     vipdoc = tmp_path / "vipdoc"
     for filename in (
         "sh600000.day",
@@ -31,11 +29,15 @@ def test_adapter_lists_only_shenzhen_and_shanghai_a_stock_files(tmp_path: Path) 
 
     refs = EasyTdxAdapter().list_stock_refs(str(vipdoc), "all")
 
-    assert [(ref.market, ref.code) for ref in refs] == [
-        ("SH", "600000"),
-        ("SH", "688001"),
-        ("SZ", "000001"),
-        ("SZ", "300001"),
+    assert [(ref.market, ref.code, ref.instrument_type) for ref in refs] == [
+        ("SH", "000001", "index"),
+        ("SH", "510300", "fund"),
+        ("SH", "600000", "stock"),
+        ("SH", "688001", "stock"),
+        ("SZ", "000001", "stock"),
+        ("SZ", "159919", "fund"),
+        ("SZ", "300001", "stock"),
+        ("SZ", "399001", "index"),
     ]
 
 
@@ -43,14 +45,12 @@ def test_adapter_excludes_provisional_current_day_before_close(tmp_path: Path) -
     timezone = ZoneInfo("Asia/Shanghai")
     filepath = tmp_path / "sh/lday/sh600000.day"
     filepath.parent.mkdir(parents=True)
-    append_daily_bars(
+    write_day_records(
         filepath,
         [
-            SecurityBar(10, 10.2, 10.4, 9.8, 100_000, 1_000_000, 2026, 8, 25, 0, 0),
-            SecurityBar(10.2, 10.5, 10.6, 10.0, 110_000, 1_100_000, 2026, 8, 26, 0, 0),
+            (20260825, 10.0, 10.4, 9.8, 10.2, 100_000, 1_000_000),
+            (20260826, 10.2, 10.6, 10.0, 10.5, 110_000, 1_100_000),
         ],
-        price_coeff=0.01,
-        vol_coeff=0.01,
     )
     ref = StockRef(market="SH", code="600000", path=filepath)
 

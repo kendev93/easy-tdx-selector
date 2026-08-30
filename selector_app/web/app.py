@@ -5,16 +5,21 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from selector_app.adapters.market_sync import EasyTdxMarketSync
+from selector_app.adapters.market_sync import TdxMarketSync
 from selector_app.backtest.service import BacktestService
+from selector_app.market_data.adapter import DuckDbMarketDataAdapter
+from selector_app.market_data.day_importer import LocalDayImporter
 from selector_app.market_data.service import LocalMarketDataService
+from selector_app.market_data.store import DuckDbMarketDataStore
 from selector_app.portfolio_backtest.service import PortfolioBacktestService
+from selector_app.screening.engine import ScreenEngine
 from selector_app.screening.jobs import ScanEngineLike, ScreenJobRunner
 from selector_app.strategy_fitness.service import StrategyFitnessService
 
@@ -27,14 +32,27 @@ def create_app(
     *,
     engine: ScanEngineLike | None = None,
     runner: ScreenJobRunner | None = None,
-    market_sync: EasyTdxMarketSync | object | None = None,
+    market_sync: TdxMarketSync | object | None = None,
     backtest_service: BacktestService | object | None = None,
     portfolio_backtest_service: PortfolioBacktestService | object | None = None,
     strategy_fitness_service: StrategyFitnessService | object | None = None,
     local_market_data_service: LocalMarketDataService | object | None = None,
+    market_data_store: DuckDbMarketDataStore | object | None = None,
+    local_day_importer: LocalDayImporter | object | None = None,
 ) -> FastAPI:
     owns_runner = runner is None
-    selected_runner = runner or ScreenJobRunner(engine=engine)
+    selected_store = cast(
+        DuckDbMarketDataStore,
+        market_data_store if market_data_store is not None else DuckDbMarketDataStore(),
+    )
+    selected_adapter = DuckDbMarketDataAdapter(selected_store)
+    selected_runner = runner or ScreenJobRunner(
+        engine=engine or ScreenEngine(adapter=selected_adapter)
+    )
+    selected_importer = cast(
+        LocalDayImporter,
+        local_day_importer if local_day_importer is not None else LocalDayImporter(selected_store),
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -44,16 +62,24 @@ def create_app(
 
     app = FastAPI(
         title="Easy TDX 选股台",
-        description="基于 easy-tdx 本地日线数据的公式选股 API",
+        description="基于项目自有 DuckDB 行情仓库的公式选股 API",
         version="0.1.0",
         lifespan=lifespan,
     )
     app.state.screen_job_runner = selected_runner
-    app.state.market_sync_service = market_sync or EasyTdxMarketSync()
-    app.state.backtest_service = backtest_service or BacktestService()
-    app.state.portfolio_backtest_service = portfolio_backtest_service or PortfolioBacktestService()
-    app.state.strategy_fitness_service = strategy_fitness_service or StrategyFitnessService()
-    app.state.local_market_data_service = local_market_data_service or LocalMarketDataService()
+    app.state.market_sync_service = market_sync or TdxMarketSync(store=selected_store)
+    app.state.backtest_service = backtest_service or BacktestService(adapter=selected_adapter)
+    app.state.portfolio_backtest_service = portfolio_backtest_service or PortfolioBacktestService(
+        adapter=selected_adapter
+    )
+    app.state.strategy_fitness_service = strategy_fitness_service or StrategyFitnessService(
+        adapter=selected_adapter
+    )
+    app.state.market_data_store = selected_store
+    app.state.local_day_importer = selected_importer
+    app.state.local_market_data_service = local_market_data_service or LocalMarketDataService(
+        store=selected_store
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

@@ -5,20 +5,20 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from easy_tdx import KlineCategory, Market, SecurityBar
-from easy_tdx.offline import append_daily_bars, read_daily_bars
 
 from selector_app.adapters.market_sync import EasyTdxMarketSync, MarketSyncConfig
+from selector_app.market_data.store import DuckDbMarketDataStore
+from selector_app.tdx_protocol.types import KlineCategory
 
 
-def bars_frame() -> pd.DataFrame:
+def bars_frame(close: float = 10.0) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "date": pd.to_datetime(["2026-08-20", "2026-08-21", "2026-08-22"]),
-            "open": [10.0, 10.2, 10.3],
-            "high": [10.4, 10.5, 10.6],
-            "low": [9.8, 10.0, 10.1],
-            "close": [10.2, 10.3, 10.5],
+            "open": [close, close + 0.1, close + 0.2],
+            "high": [close + 0.4, close + 0.5, close + 0.6],
+            "low": [close - 0.2, close - 0.1, close],
+            "close": [close + 0.2, close + 0.3, close + 0.5],
             "vol": [100_000.0, 110_000.0, 120_000.0],
             "amount": [1_000_000.0, 1_100_000.0, 1_200_000.0],
         }
@@ -28,7 +28,7 @@ def bars_frame() -> pd.DataFrame:
 class FakeClient:
     def __init__(self, *, fail_code: str | None = None, frame: pd.DataFrame | None = None) -> None:
         self.fail_code = fail_code
-        self.frame = frame
+        self.frame = frame if frame is not None else bars_frame()
         self.requests: list[tuple[str, int]] = []
 
     def __enter__(self) -> FakeClient:
@@ -38,153 +38,88 @@ class FakeClient:
         return None
 
     def get_security_list_all(self, pages: str = "all") -> pd.DataFrame:
+        del pages
         return pd.DataFrame(
             [
-                {"market": Market.SH, "code": "600000"},
-                {"market": Market.SZ, "code": "000001"},
-                {"market": Market.SH, "code": "510300"},  # defensive fund filter
+                {"market": "SH", "code": "600000"},
+                {"market": "SZ", "code": "000001"},
+                {"market": "SH", "code": "510300"},
             ]
         )
 
     def get_security_bars(
-        self, market: Market, code: str, category: KlineCategory, start: int, count: int
+        self, market: object, code: str, category: object, start: int, count: int
     ) -> pd.DataFrame:
+        del market
         assert category == KlineCategory.DAY
         assert start == 0
         self.requests.append((code, count))
         if code == self.fail_code:
             raise RuntimeError("upstream unavailable")
-        source = self.frame if self.frame is not None else bars_frame()
-        return source.tail(min(count, len(source)))
+        return self.frame.tail(min(count, len(self.frame))).copy()
 
 
-def test_sync_writes_tdx_day_files_and_skips_non_stock_codes(tmp_path: Path) -> None:
-    service = EasyTdxMarketSync(client_factory=lambda _timeout: FakeClient())
-    report = service.sync(MarketSyncConfig(vipdoc_path=tmp_path))
+def _service(
+    tmp_path: Path, client: FakeClient, *, clock: datetime | None = None
+) -> EasyTdxMarketSync:
+    return EasyTdxMarketSync(
+        store=DuckDbMarketDataStore(tmp_path / "market.duckdb"),
+        client_factory=lambda _timeout: client,
+        clock=(lambda: clock) if clock is not None else None,
+    )
 
-    assert report.total_candidates == 2
-    assert report.processed == 2
-    assert report.updated_files == 2
-    assert report.written_bars == 6
+
+def test_sync_writes_all_known_instruments_to_duckdb(tmp_path: Path) -> None:
+    service = _service(tmp_path, FakeClient())
+
+    report = service.sync(MarketSyncConfig())
+
+    assert report.total_candidates == 3
+    assert report.processed == 3
+    assert report.updated_files == 3
+    assert report.written_bars == 9
     assert report.errors == 0
-    assert len(read_daily_bars(tmp_path / "sh/lday/sh600000.day")) == 3
-    assert len(read_daily_bars(tmp_path / "sz/lday/sz000001.day")) == 3
-    assert not (tmp_path / "sh/lday/sh510300.day").exists()
+    assert service._store.status().bar_count == 9
 
 
 def test_sync_continues_after_one_upstream_failure(tmp_path: Path) -> None:
-    service = EasyTdxMarketSync(client_factory=lambda _timeout: FakeClient(fail_code="000001"))
-    report = service.sync(MarketSyncConfig(vipdoc_path=tmp_path))
+    service = _service(tmp_path, FakeClient(fail_code="000001"))
 
-    assert report.processed == 2
-    assert report.updated_files == 1
-    assert report.written_bars == 3
+    report = service.sync(MarketSyncConfig())
+
+    assert report.processed == 3
+    assert report.updated_files == 2
+    assert report.written_bars == 6
     assert report.errors == 1
     assert report.failure_reasons["upstream unavailable"] == 1
 
 
-def test_sync_does_not_duplicate_existing_day_records(tmp_path: Path) -> None:
+def test_sync_skips_unchanged_online_rows(tmp_path: Path) -> None:
     client = FakeClient()
-    service = EasyTdxMarketSync(client_factory=lambda _timeout: client)
-    config = MarketSyncConfig(vipdoc_path=tmp_path)
+    service = _service(tmp_path, client)
 
-    first = service.sync(config)
-    second = service.sync(config)
+    first = service.sync(MarketSyncConfig())
+    second = service.sync(MarketSyncConfig())
 
-    assert first.written_bars == 6
+    assert first.written_bars == 9
     assert second.written_bars == 0
+    assert second.unchanged_files == 3
     assert client.requests.count(("600000", 800)) == 1
-    assert client.requests.count(("000001", 800)) == 1
     assert client.requests.count(("600000", 2)) == 1
-    assert client.requests.count(("000001", 2)) == 1
-    assert len(read_daily_bars(tmp_path / "sh/lday/sh600000.day")) == 3
 
 
-def test_sync_finds_the_last_completed_bar_before_close(tmp_path: Path) -> None:
-    timezone = ZoneInfo("Asia/Shanghai")
-    morning = datetime(2026, 8, 26, 10, 0, tzinfo=timezone)
-    server_frame = bars_frame().copy()
-    server_frame.loc[server_frame.index[-1], "date"] = pd.Timestamp("2026-08-26")
-
-    class SingleStockClient(FakeClient):
-        def get_security_list_all(self, pages: str = "all") -> pd.DataFrame:
-            return pd.DataFrame([{"market": Market.SH, "code": "600000"}])
-
-    client = SingleStockClient(frame=server_frame)
-    filepath = tmp_path / "sh/lday/sh600000.day"
-    filepath.parent.mkdir(parents=True)
-    append_daily_bars(
-        filepath,
-        [
-            SecurityBar(
-                open=10.0,
-                close=10.2,
-                high=10.4,
-                low=9.8,
-                vol=100_000,
-                amount=1_000_000,
-                year=2026,
-                month=8,
-                day=20,
-                hour=0,
-                minute=0,
-            )
-        ],
-        price_coeff=0.01,
-        vol_coeff=0.01,
-    )
-
-    report = EasyTdxMarketSync(
-        client_factory=lambda _timeout: client,
-        clock=lambda: morning,
-    ).sync(MarketSyncConfig(vipdoc_path=tmp_path))
-
-    assert report.written_bars == 1
-    assert client.requests == [("600000", 2), ("600000", 800)]
-    assert [bar.day for bar in read_daily_bars(filepath)] == [20, 21]
-
-
-def test_sync_replaces_partial_current_day_record_after_market_close(tmp_path: Path) -> None:
-    timezone = ZoneInfo("Asia/Shanghai")
-    close_time = datetime(2026, 8, 26, 16, 0, tzinfo=timezone)
+def test_sync_uses_completed_bar_after_close(tmp_path: Path) -> None:
     current_day = pd.Timestamp("2026-08-26")
-    server_frame = bars_frame().copy()
-    server_frame.loc[server_frame.index[-1], "date"] = current_day
-
-    class SingleStockClient(FakeClient):
-        def get_security_list_all(self, pages: str = "all") -> pd.DataFrame:
-            return pd.DataFrame([{"market": Market.SH, "code": "600000"}])
-
-    client = SingleStockClient(frame=server_frame)
-    filepath = tmp_path / "sh/lday/sh600000.day"
-    filepath.parent.mkdir(parents=True)
-    append_daily_bars(
-        filepath,
-        [
-            SecurityBar(
-                open=9.0,
-                close=9.5,
-                high=10.0,
-                low=8.5,
-                vol=100_000,
-                amount=950_000,
-                year=2026,
-                month=8,
-                day=26,
-                hour=0,
-                minute=0,
-            )
-        ],
-        price_coeff=0.01,
-        vol_coeff=0.01,
-    )
-    service = EasyTdxMarketSync(
-        client_factory=lambda _timeout: client,
-        clock=lambda: close_time,
+    frame = bars_frame()
+    frame.loc[frame.index[-1], "date"] = current_day
+    client = FakeClient(frame=frame)
+    service = _service(
+        tmp_path,
+        client,
+        clock=datetime(2026, 8, 26, 16, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
     )
 
-    report = service.sync(MarketSyncConfig(vipdoc_path=tmp_path))
+    report = service.sync(MarketSyncConfig(universe="sh"))
 
-    assert report.updated_files == 1
-    assert report.written_bars == 1
-    assert read_daily_bars(filepath)[-1].close == 10.5
+    assert report.written_bars == 6
+    assert service._store.read_bars("SH", "600000").iloc[-1]["date"] == pd.Timestamp("2026-08-26")

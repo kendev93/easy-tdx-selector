@@ -12,7 +12,7 @@ describe('backtest API', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'bt-1', status: 'queued' } }), { status: 202 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'bt-1', status: 'completed' } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { code: '600000' }, meta: {} }), { status: 200 }))
-    const payload = { market: 'SH' as const, code: '600000', vipdoc_path: '/data/vipdoc', buy_signal: 'custom.buy', sell_signal: 'custom.sell' }
+    const payload = { market: 'SH' as const, code: '600000', buy_signal: 'custom.buy', sell_signal: 'custom.sell' }
 
     await expect(createBacktest(payload)).resolves.toEqual({ job_id: 'bt-1', status: 'queued' })
     await expect(getBacktest('bt-1')).resolves.toEqual({ job_id: 'bt-1', status: 'completed' })

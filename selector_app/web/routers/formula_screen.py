@@ -8,7 +8,6 @@ from typing import cast
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
 
-from selector_app.adapters.easy_tdx_adapter import suggested_vipdoc_path
 from selector_app.formulas.custom import FormulaParseError, parse_formula
 from selector_app.formulas.registry import FORMULA_REGISTRY
 from selector_app.screening.export import report_to_csv, report_to_json
@@ -18,7 +17,6 @@ from selector_app.screening.models import ScanReport
 from ..schemas import (
     CustomFormulaParseRequest,
     FormulaScreenRequest,
-    validate_vipdoc_path,
 )
 
 router = APIRouter(prefix="/formula-screen", tags=["formula-screen"])
@@ -40,17 +38,15 @@ def metadata() -> dict[str, object]:
             ],
             "supported_markets": ["SH", "SZ"],
             "supported_universe": [
-                {"value": "all", "label": "沪深全部 A 股"},
-                {"value": "sh", "label": "仅上海 A 股"},
-                {"value": "sz", "label": "仅深圳 A 股"},
-                {"value": "custom", "label": "自定义股票列表"},
+                {"value": "all", "label": "沪深全部品种"},
+                {"value": "sh", "label": "仅上海品种"},
+                {"value": "sz", "label": "仅深圳品种"},
+                {"value": "custom", "label": "自定义品种列表"},
             ],
             "periods": [{"value": "daily", "label": "日线"}],
             "data_directory_help": (
-                "请输入通达信 vipdoc 目录；仅扫描 sh/sz lday 下的 A 股 .day 文件，"
-                "ETF、基金、指数和债券会被排除。"
+                "行情统一读取本地 DuckDB；请先在本地行情页面导入通达信 vipdoc 数据。"
             ),
-            "default_vipdoc_path": suggested_vipdoc_path(),
         }
     }
 
@@ -71,10 +67,7 @@ def parse_custom_formula(payload: CustomFormulaParseRequest) -> JSONResponse:
 @router.post("/scan", status_code=status.HTTP_202_ACCEPTED)
 def create_job(payload: FormulaScreenRequest, request: Request) -> JSONResponse:
     try:
-        validate_vipdoc_path(payload.vipdoc_path)
         if payload.universe == "custom" and payload.universe_file:
-            # The adapter performs the detailed line parsing; this early check
-            # keeps obvious path errors as a user-facing 422 response.
             if not Path(payload.universe_file).expanduser().is_file():
                 raise ValueError(f"自定义股票列表文件不存在: {payload.universe_file}")
         job_id = _runner(request).submit(payload.to_config())

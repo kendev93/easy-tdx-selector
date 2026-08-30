@@ -14,7 +14,6 @@ describe('portfolio backtest API', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { max_positions: 3 }, meta: {} }), { status: 200 }))
 
     await expect(createPortfolioBacktest({
-      vipdoc_path: '/data/vipdoc',
       universe: 'all',
       selected_signals: ['custom.buy'],
       combine_mode: 'any',

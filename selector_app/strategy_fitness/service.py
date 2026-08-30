@@ -12,10 +12,14 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
-from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, StockRef
 from selector_app.formulas.common import validate_market_data
 from selector_app.formulas.custom import ParsedFormula, parse_formula
 from selector_app.formulas.registry import FORMULA_REGISTRY, FormulaRegistry
+from selector_app.market_data.adapter import DuckDbMarketDataAdapter
+from selector_app.market_data.day_format import classify_board, classify_instrument
+from selector_app.market_data.models import InstrumentBoard, InstrumentType, StockRef
+from selector_app.market_data.scope import InstrumentScope
+from selector_app.market_data.store import DuckDbMarketDataStore
 from selector_app.portfolio_backtest.models import PortfolioBacktestReport
 from selector_app.portfolio_backtest.service import PortfolioBacktestService
 
@@ -36,6 +40,8 @@ class FitnessMarketDataAdapter(Protocol):
         vipdoc_path: str | Path,
         universe: str,
         universe_file: str | Path | None = None,
+        instrument_types: tuple[InstrumentType, ...] | None = None,
+        boards: tuple[InstrumentBoard, ...] | None = None,
     ) -> list[StockRef]: ...
 
     def read_stock(self, ref: StockRef) -> pd.DataFrame: ...
@@ -60,6 +66,8 @@ class _CachedAdapter:
         vipdoc_path: str | Path,
         universe: str,
         universe_file: str | Path | None = None,
+        instrument_types: tuple[InstrumentType, ...] | None = None,
+        boards: tuple[InstrumentBoard, ...] | None = None,
     ) -> list[StockRef]:
         return list(self._refs)
 
@@ -75,7 +83,7 @@ class StrategyFitnessService:
         adapter: FitnessMarketDataAdapter | None = None,
         registry: FormulaRegistry | None = None,
     ) -> None:
-        self._adapter = adapter or EasyTdxAdapter()
+        self._adapter = adapter or DuckDbMarketDataAdapter(DuckDbMarketDataStore())
         self._registry = registry or FORMULA_REGISTRY
 
     def run(
@@ -83,11 +91,7 @@ class StrategyFitnessService:
         config: StrategyFitnessConfig,
         progress_callback: StrategyFitnessProgressCallback | None = None,
     ) -> StrategyFitnessReport:
-        refs = self._adapter.list_stock_refs(
-            config.strategy.vipdoc_path,
-            config.strategy.universe,
-            config.strategy.universe_file,
-        )
+        refs = self._list_refs(config)
         parsed = (
             parse_formula(config.strategy.formula_text) if config.strategy.formula_text else None
         )
@@ -144,9 +148,15 @@ class StrategyFitnessService:
     ) -> tuple[dict[str, pd.DataFrame], Counter[str]]:
         frames: dict[str, pd.DataFrame] = {}
         failures: Counter[str] = Counter()
+        batch_frames = self._batch_frames(refs)
         for ref in refs:
             try:
-                frame = self._prepare_frame(self._adapter.read_stock(ref))
+                source = (
+                    batch_frames.get((ref.market, ref.code))
+                    if batch_frames is not None
+                    else self._adapter.read_stock(ref)
+                )
+                frame = self._prepare_frame(source if source is not None else pd.DataFrame())
                 if frame.empty:
                     raise ValueError("数据为空")
                 frames[ref_key(ref)] = frame
@@ -154,6 +164,63 @@ class StrategyFitnessService:
                 reason = str(exc).strip()[:200] or type(exc).__name__
                 failures[reason] += 1
         return frames, failures
+
+    def _list_refs(self, config: StrategyFitnessConfig) -> list[StockRef]:
+        strategy = config.strategy
+        if not strategy.instrument_types and not strategy.boards:
+            return self._adapter.list_stock_refs(
+                strategy.vipdoc_path,
+                strategy.universe,
+                strategy.universe_file,
+            )
+        try:
+            refs = self._adapter.list_stock_refs(
+                strategy.vipdoc_path,
+                strategy.universe,
+                strategy.universe_file,
+                instrument_types=strategy.instrument_types,
+                boards=strategy.boards,
+            )
+        except TypeError as exc:
+            if "unexpected keyword" not in str(exc):
+                raise
+            refs = self._adapter.list_stock_refs(
+                strategy.vipdoc_path,
+                strategy.universe,
+                strategy.universe_file,
+            )
+        scope = InstrumentScope.from_values(
+            universe=strategy.universe,
+            instrument_types=strategy.instrument_types,
+            boards=strategy.boards,
+        )
+        return [
+            ref
+            for ref in refs
+            if scope.matches(
+                ref.market,
+                str(
+                    classify_instrument(ref.market, ref.code)
+                    or getattr(ref, "instrument_type", "stock")
+                ),
+                str(classify_board(ref.market, ref.code) or getattr(ref, "board", "main")),
+            )
+        ]
+
+    def _batch_frames(
+        self,
+        refs: list[StockRef],
+    ) -> Mapping[tuple[str, str], pd.DataFrame] | None:
+        reader = getattr(self._adapter, "read_many_stocks", None)
+        if reader is None:
+            return None
+        combined = reader(refs)
+        frames: dict[tuple[str, str], pd.DataFrame] = {}
+        if combined.empty:
+            return frames
+        for key, group in combined.groupby(["market", "code"], sort=False):
+            frames[(str(key[0]), str(key[1]))] = group.reset_index(drop=True)
+        return frames
 
     def _evaluate_stock(
         self,

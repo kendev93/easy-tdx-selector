@@ -1,4 +1,4 @@
-"""Read, aggregate, and enrich local vipdoc daily bars for chart views."""
+"""Read, aggregate, and enrich DuckDB daily bars for chart views."""
 
 from __future__ import annotations
 
@@ -13,7 +13,9 @@ from typing import Literal, Protocol, cast
 import numpy as np
 import pandas as pd
 
-from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, MarketCode, StockRef
+from .adapter import DuckDbMarketDataAdapter
+from .models import InstrumentBoard, MarketCode, StockRef
+from .store import DuckDbMarketDataStore
 
 ChartPeriod = Literal["daily", "monthly", "yearly"]
 MarketScope = Literal["all", "SH", "SZ"]
@@ -42,12 +44,16 @@ class LocalInstrument:
     data_start: str | None
     data_end: str | None
     last_close: float | None
+    instrument_type: str = "stock"
     error: str | None = None
+    board: InstrumentBoard = "main"
 
     def to_dict(self) -> dict[str, object]:
         return {
             "market": self.market,
             "code": self.code,
+            "instrument_type": self.instrument_type,
+            "board": self.board,
             "bars": self.bars,
             "data_start": self.data_start,
             "data_end": self.data_end,
@@ -103,10 +109,14 @@ class LocalMarketChart:
 
 
 class LocalMarketDataService:
-    """Expose local stock files as paginated summaries and chart-ready data."""
+    """Expose imported DuckDB instruments as summaries and chart-ready data."""
 
-    def __init__(self, adapter: LocalMarketDataAdapter | None = None) -> None:
-        self._adapter = adapter or EasyTdxAdapter()
+    def __init__(
+        self,
+        adapter: LocalMarketDataAdapter | None = None,
+        store: DuckDbMarketDataStore | None = None,
+    ) -> None:
+        self._adapter = adapter or DuckDbMarketDataAdapter(store or DuckDbMarketDataStore())
 
     def list_instruments(
         self,
@@ -128,7 +138,10 @@ class LocalMarketDataService:
         filtered = [
             ref
             for ref in sorted(refs, key=lambda item: (item.market, item.code))
-            if not query or query in ref.code or query in ref.market
+            if not query
+            or query in ref.code
+            or query in ref.market
+            or query in getattr(ref, "instrument_type", "")
         ]
         total = len(filtered)
         start = (page - 1) * page_size
@@ -192,6 +205,7 @@ class LocalMarketDataService:
                 data_end=None,
                 last_close=None,
                 error=str(exc),
+                board=ref.board,
             )
         if frame.empty:
             return LocalInstrument(
@@ -202,10 +216,13 @@ class LocalMarketDataService:
                 data_end=None,
                 last_close=None,
                 error="没有可用日线数据",
+                board=ref.board,
             )
         return LocalInstrument(
             market=ref.market,
             code=ref.code,
+            instrument_type=getattr(ref, "instrument_type", "stock"),
+            board=getattr(ref, "board", "main"),
             bars=len(frame),
             data_start=_date_text(frame["date"].iloc[0]),
             data_end=_date_text(frame["date"].iloc[-1]),

@@ -11,9 +11,9 @@ from typing import Protocol, cast
 
 import numpy as np
 import pandas as pd
-from easy_tdx.backtest.performance import PerformanceAnalyzer
 
-from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, StockRef
+from selector_app.backtest.performance import PerformanceAnalyzer
+from selector_app.backtest.profiles import TradeProfile, profile_from_config
 from selector_app.formulas.common import validate_market_data
 from selector_app.formulas.custom import (
     ParsedFormula,
@@ -23,6 +23,11 @@ from selector_app.formulas.custom import (
 )
 from selector_app.formulas.registry import FORMULA_REGISTRY, FormulaRegistry
 from selector_app.formulas.types import FormulaResult
+from selector_app.market_data.adapter import DuckDbMarketDataAdapter
+from selector_app.market_data.day_format import classify_board, classify_instrument
+from selector_app.market_data.models import InstrumentBoard, InstrumentType, StockRef
+from selector_app.market_data.scope import InstrumentScope
+from selector_app.market_data.store import DuckDbMarketDataStore
 from selector_app.screening.engine import combine_matches
 from selector_app.strategy_fitness.rolling import (
     RollingFitnessDecision,
@@ -46,6 +51,8 @@ class PortfolioMarketDataAdapter(Protocol):
         vipdoc_path: str | Path,
         universe: str,
         universe_file: str | Path | None = None,
+        instrument_types: tuple[InstrumentType, ...] | None = None,
+        boards: tuple[InstrumentBoard, ...] | None = None,
     ) -> list[StockRef]: ...
 
     def read_stock(self, ref: StockRef) -> pd.DataFrame: ...
@@ -55,6 +62,8 @@ class PortfolioMarketDataAdapter(Protocol):
 class _StockSeries:
     market: str
     code: str
+    instrument_type: InstrumentType
+    board: InstrumentBoard
     dates: np.ndarray
     opens: np.ndarray
     closes: np.ndarray
@@ -71,6 +80,8 @@ class _StockSeries:
 class _Position:
     market: str
     code: str
+    instrument_type: InstrumentType
+    board: InstrumentBoard
     size: float
     entry_price: float
     entry_date: int
@@ -103,7 +114,7 @@ class PortfolioBacktestService:
         adapter: PortfolioMarketDataAdapter | None = None,
         registry: FormulaRegistry | None = None,
     ) -> None:
-        self._adapter = adapter or EasyTdxAdapter()
+        self._adapter = adapter or DuckDbMarketDataAdapter(DuckDbMarketDataStore())
         self._registry = registry or FORMULA_REGISTRY
 
     def run(
@@ -111,19 +122,21 @@ class PortfolioBacktestService:
         config: PortfolioBacktestConfig,
         progress_callback: PortfolioBacktestProgressCallback | None = None,
     ) -> PortfolioBacktestReport:
-        refs = self._adapter.list_stock_refs(
-            config.vipdoc_path,
-            config.universe,
-            config.universe_file,
-        )
+        refs = self._list_refs(config)
         parsed = parse_formula(config.formula_text) if config.formula_text else None
         self._validate_outputs(config, parsed)
 
         contexts: list[_StockSeries] = []
         failure_reasons: Counter[str] = Counter()
+        frames = self._batch_frames(refs)
         for current, ref in enumerate(refs, start=1):
             try:
-                context = self._build_context(ref, config, parsed)
+                context = self._build_context(
+                    ref,
+                    config,
+                    parsed,
+                    frame=frames.get((ref.market, ref.code)) if frames is not None else None,
+                )
             except Exception as exc:  # noqa: BLE001 - one bad stock must not abort a portfolio
                 reason = str(exc).strip()[:200] or type(exc).__name__
                 failure_reasons[reason] += 1
@@ -243,8 +256,9 @@ class PortfolioBacktestService:
         ref: StockRef,
         config: PortfolioBacktestConfig,
         parsed: ParsedFormula | None,
+        frame: pd.DataFrame | None = None,
     ) -> _StockSeries | None:
-        frame = self._prepare_frame(self._adapter.read_stock(ref))
+        frame = self._prepare_frame(frame if frame is not None else self._adapter.read_stock(ref))
         if frame.empty:
             raise ValueError("数据为空")
         results = self._calculate_results(frame, config, parsed)
@@ -274,6 +288,11 @@ class PortfolioBacktestService:
         return _StockSeries(
             market=ref.market,
             code=ref.code,
+            instrument_type=cast(InstrumentType, getattr(ref, "instrument_type", "stock")),
+            board=cast(
+                InstrumentBoard,
+                classify_board(ref.market, ref.code) or getattr(ref, "board", "main"),
+            ),
             dates=dates,
             opens=window["open"].to_numpy(dtype=float, copy=True),
             closes=window["close"].to_numpy(dtype=float, copy=True),
@@ -281,6 +300,59 @@ class PortfolioBacktestService:
             values=value_arrays,
             date_to_index={int(value): index for index, value in enumerate(dates)},
         )
+
+    def _batch_frames(self, refs: list[StockRef]) -> Mapping[tuple[str, str], pd.DataFrame] | None:
+        reader = getattr(self._adapter, "read_many_stocks", None)
+        if reader is None:
+            return None
+        combined = reader(refs)
+        frames: dict[tuple[str, str], pd.DataFrame] = {}
+        if combined.empty:
+            return frames
+        for key, group in combined.groupby(["market", "code"], sort=False):
+            frames[(str(key[0]), str(key[1]))] = group.reset_index(drop=True)
+        return frames
+
+    def _list_refs(self, config: PortfolioBacktestConfig) -> list[StockRef]:
+        if not config.instrument_types and not config.boards:
+            return self._adapter.list_stock_refs(
+                config.vipdoc_path,
+                config.universe,
+                config.universe_file,
+            )
+        try:
+            refs = self._adapter.list_stock_refs(
+                config.vipdoc_path,
+                config.universe,
+                config.universe_file,
+                instrument_types=config.instrument_types,
+                boards=config.boards,
+            )
+        except TypeError as exc:
+            if "unexpected keyword" not in str(exc):
+                raise
+            refs = self._adapter.list_stock_refs(
+                config.vipdoc_path,
+                config.universe,
+                config.universe_file,
+            )
+        scope = InstrumentScope.from_values(
+            universe=config.universe,
+            instrument_types=config.instrument_types,
+            boards=config.boards,
+        )
+        return [
+            ref
+            for ref in refs
+            if scope.matches(
+                ref.market,
+                str(
+                    classify_instrument(ref.market, ref.code)
+                    or getattr(ref, "instrument_type", "stock")
+                ),
+                str(classify_board(ref.market, ref.code) or getattr(ref, "board", "main")),
+            )
+        ]
 
     def _calculate_results(
         self,
@@ -472,8 +544,14 @@ class PortfolioBacktestService:
                 continue
             price = self._execution_price(context, index, config)
             size = position.size
-            commission = max(size * price * config.commission, config.min_commission)
-            stamp_tax = size * price * config.stamp_tax
+            profile = profile_from_config(
+                position.instrument_type,
+                commission=config.commission,
+                min_commission=config.min_commission,
+                stamp_tax=config.stamp_tax,
+            )
+            commission = max(size * price * profile.commission, profile.min_commission)
+            stamp_tax = size * price * profile.stamp_tax
             slippage = size * config.slippage
             proceeds = size * price - commission - stamp_tax - slippage
             cash += proceeds
@@ -483,6 +561,8 @@ class PortfolioBacktestService:
                     "signal_date": _date_text(pending.signal_date),
                     "market": position.market,
                     "code": position.code,
+                    "instrument_type": position.instrument_type,
+                    "board": position.board,
                     "direction": "SELL",
                     "size": float(size),
                     "price": float(price),
@@ -531,16 +611,28 @@ class PortfolioBacktestService:
             if index is None:
                 continue
             price = self._execution_price(context, index, config)
-            shares = int(max(pending.budget, 0) / price / 100) * 100 if price > 0 else 0
-            shares = self._affordable_shares(shares, price, cash, config)
+            profile = profile_from_config(
+                context.instrument_type,
+                commission=config.commission,
+                min_commission=config.min_commission,
+                stamp_tax=config.stamp_tax,
+            )
+            shares = (
+                int(max(pending.budget, 0) / price / profile.lot_size) * profile.lot_size
+                if price > 0
+                else 0
+            )
+            shares = self._affordable_shares(shares, price, cash, profile, config.slippage)
             if shares <= 0:
                 continue
-            commission = max(shares * price * config.commission, config.min_commission)
+            commission = max(shares * price * profile.commission, profile.min_commission)
             slippage = shares * config.slippage
             cash -= shares * price + commission + slippage
             positions[pending.symbol] = _Position(
                 market=context.market,
                 code=context.code,
+                instrument_type=context.instrument_type,
+                board=context.board,
                 size=float(shares),
                 entry_price=float(price),
                 entry_date=current_date,
@@ -553,6 +645,8 @@ class PortfolioBacktestService:
                     "signal_date": _date_text(pending.signal_date),
                     "market": context.market,
                     "code": context.code,
+                    "instrument_type": context.instrument_type,
+                    "board": context.board,
                     "direction": "BUY",
                     "size": float(shares),
                     "price": float(price),
@@ -572,14 +666,15 @@ class PortfolioBacktestService:
         shares: int,
         price: float,
         cash: float,
-        config: PortfolioBacktestConfig,
+        profile: TradeProfile,
+        slippage: float,
     ) -> int:
-        while shares >= 100:
-            commission = max(shares * price * config.commission, config.min_commission)
-            total_cost = shares * price + commission + shares * config.slippage
+        while shares >= profile.lot_size:
+            commission = max(shares * price * profile.commission, profile.min_commission)
+            total_cost = shares * price + commission + shares * slippage
             if total_cost <= cash:
                 return shares
-            shares -= 100
+            shares -= profile.lot_size
         return 0
 
     @staticmethod
@@ -767,6 +862,8 @@ class PortfolioBacktestService:
             {
                 "market": position.market,
                 "code": position.code,
+                "instrument_type": position.instrument_type,
+                "board": position.board,
                 "size": float(position.size),
                 "entry_price": float(position.entry_price),
                 "close": float(last_prices.get(symbol, position.entry_price)),

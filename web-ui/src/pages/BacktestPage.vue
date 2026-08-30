@@ -17,7 +17,6 @@ interface BacktestFormState {
   mode: 'preset' | 'custom'
   market: 'SH' | 'SZ'
   code: string
-  vipdocPath: string
   buySignal: string
   sellSignal: string
   formulaText: string
@@ -41,7 +40,6 @@ const form = reactive<BacktestFormState>({
   mode: 'preset',
   market: 'SH',
   code: '',
-  vipdocPath: '',
   buySignal: '',
   sellSignal: '',
   formulaText: '',
@@ -164,9 +162,6 @@ function validate(): Record<string, string> {
   const next: Record<string, string> = {}
   const code = form.code.trim()
   if (!/^\d{6}$/.test(code)) next.code = '请输入六位股票代码。'
-  else if (form.market === 'SH' && !/^(60|68)/.test(code)) next.code = '上海回测只支持 60 或 68 开头的 A 股。'
-  else if (form.market === 'SZ' && !/^(00|30)/.test(code)) next.code = '深圳回测只支持 00 或 30 开头的 A 股。'
-  if (!form.vipdocPath.trim()) next.vipdocPath = '请输入通达信 vipdoc 数据目录。'
   if (form.mode === 'custom') {
     if (!form.formulaText.trim()) next.formulaText = '请输入通达信公式。'
     else if (!customMetadata.value) next.formulaText = '请先解析公式，再选择买卖输出。'
@@ -199,7 +194,6 @@ function buildPayload(): BacktestPayload {
   return {
     market: form.market,
     code: form.code.trim(),
-    vipdoc_path: form.vipdocPath.trim(),
     buy_signal: form.buySignal,
     sell_signal: form.sellSignal,
     formula_text: form.mode === 'custom' ? form.formulaText.trim() : null,
@@ -219,7 +213,7 @@ function buildPayload(): BacktestPayload {
 
 function apiMessage(error: unknown): string {
   if (error instanceof FormulaScreenApiError) return error.message
-  return '回测失败，请检查后端服务、股票代码、数据目录和配置后重试。'
+  return '回测失败，请检查本地 DuckDB 数据和配置后重试。'
 }
 
 async function submit(): Promise<void> {
@@ -283,7 +277,6 @@ function downloadResult(): void {
 onMounted(async () => {
   try {
     metadata.value = await fetchMetadata()
-    form.vipdocPath = metadata.value.default_vipdoc_path ?? '/data/vipdoc'
     const signals = presetSignals.value
     form.buySignal = signals.find((signal) => signal.id.endsWith('prepare_rally'))?.id ?? signals[0]?.id ?? ''
     form.sellSignal = signals.find((signal) => signal.id.endsWith('end_zone'))?.id ?? signals[1]?.id ?? ''
@@ -364,10 +357,7 @@ watch(() => form.formulaText, (value) => {
               <div><label for="backtest-code">股票代码 <span class="required">*</span></label><input id="backtest-code" v-model="form.code" data-testid="backtest-code" type="text" inputmode="numeric" maxlength="6" placeholder="600000" autocomplete="off"></div>
             </div>
             <p v-if="errors.code" class="field-error">{{ errors.code }}</p>
-            <label for="backtest-vipdoc-path">vipdoc 数据目录 <span class="required">*</span></label>
-            <input id="backtest-vipdoc-path" v-model="form.vipdocPath" data-testid="backtest-vipdoc-path" type="text" placeholder="/data/vipdoc" autocomplete="off">
-            <p class="helper">容器模式默认使用 /data/vipdoc；读取的是本地已完成日线。</p>
-            <p v-if="errors.vipdocPath" class="field-error">{{ errors.vipdocPath }}</p>
+            <p class="helper">读取已导入本地 DuckDB 的已完成日线；请先在“本地行情”页面导入数据。</p>
           </fieldset>
 
           <fieldset class="form-section signal-pair">
@@ -400,7 +390,7 @@ watch(() => form.formulaText, (value) => {
           </div>
 
           <button class="primary-button" data-testid="start-backtest" type="submit" :disabled="!canSubmit"><span v-if="loading" class="spinner" aria-hidden="true"></span>{{ loading ? '回测中…' : '开始回测' }}</button>
-          <p class="privacy-note">回测只读取本机 vipdoc，不会上传行情数据；结果保存在当前服务进程内存。</p>
+          <p class="privacy-note">回测只读取本机 DuckDB，不会上传行情数据；结果保存在当前服务进程内存。</p>
         </form>
 
         <section class="results-panel panel" data-testid="backtest-results" aria-live="polite">

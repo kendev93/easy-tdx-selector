@@ -60,7 +60,6 @@ describe('BacktestPage', () => {
     const wrapper = mount(BacktestPage)
     await flushPromises()
     await wrapper.get('[data-testid="backtest-code"]').setValue('600000')
-    await wrapper.get('[data-testid="backtest-vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="backtest-market"]').setValue('SZ')
     await wrapper.get('[data-testid="backtest-market"]').setValue('SH')
     await wrapper.get('[data-testid="backtest-buy-signal"]').setValue('indicator_three.end_zone')
@@ -73,7 +72,7 @@ describe('BacktestPage', () => {
     await flushPromises()
 
     expect(backtestApi.createBacktest).toHaveBeenCalledWith(expect.objectContaining({
-      market: 'SH', code: '600000', vipdoc_path: '/data/vipdoc',
+      market: 'SH', code: '600000',
       buy_signal: 'indicator_three.prepare_rally', sell_signal: 'indicator_three.end_zone',
       start_date: '2024-01-02', end_date: '2024-01-06',
     }))
@@ -101,7 +100,6 @@ describe('BacktestPage', () => {
 
     await wrapper.get('#backtest-param-N').setValue(0)
     await wrapper.get('[data-testid="backtest-code"]').setValue('600000')
-    await wrapper.get('[data-testid="backtest-vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="backtest-config"]').trigger('submit')
     expect(wrapper.text()).toContain('参数 N 必须在 1 到 10000 之间')
     await wrapper.get('#backtest-param-N').setValue(8)
@@ -123,7 +121,6 @@ describe('BacktestPage', () => {
 
     vi.mocked(backtestApi.createBacktest).mockRejectedValueOnce(new Error('network down'))
     await wrapper.get('[data-testid="backtest-code"]').setValue('600000')
-    await wrapper.get('[data-testid="backtest-vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="backtest-config"]').trigger('submit')
     await flushPromises()
     expect(wrapper.get('[data-testid="backtest-message"]').text()).toContain('回测失败')
@@ -133,7 +130,6 @@ describe('BacktestPage', () => {
     const wrapper = mount(BacktestPage)
     await flushPromises()
     await wrapper.get('[data-testid="backtest-code"]').setValue('600000')
-    await wrapper.get('[data-testid="backtest-vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="backtest-advanced-toggle"]').trigger('click')
     await wrapper.get('[data-testid="initial-cash"]').setValue(0)
     await wrapper.get('[data-testid="position-mode"]').setValue('fixed')
@@ -156,7 +152,6 @@ describe('BacktestPage', () => {
     const wrapper = mount(BacktestPage)
     await flushPromises()
     await wrapper.get('[data-testid="backtest-code"]').setValue('600000')
-    await wrapper.get('[data-testid="backtest-vipdoc-path"]').setValue('/data/vipdoc')
     await wrapper.get('[data-testid="backtest-advanced-toggle"]').trigger('click')
     await wrapper.get('[data-testid="initial-cash"]').setValue(50000)
     await wrapper.get('[data-testid="execution"]').setValue('next_close')

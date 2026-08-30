@@ -19,7 +19,7 @@ from selector_app.portfolio_backtest.service import (
 )
 from selector_app.screening.jobs import JobState, ScreenJobRunner, TaskUserError
 
-from ..schemas import PortfolioBacktestRequest, validate_vipdoc_path
+from ..schemas import PortfolioBacktestRequest
 
 router = APIRouter(prefix="/portfolio-backtests", tags=["portfolio-backtests"])
 
@@ -56,7 +56,6 @@ def create_portfolio_backtest(
     request: Request,
 ) -> JSONResponse:
     try:
-        validate_vipdoc_path(payload.vipdoc_path)
         if payload.universe == "custom" and payload.universe_file:
             if not Path(payload.universe_file).expanduser().is_file():
                 raise ValueError(f"自定义股票列表文件不存在: {payload.universe_file}")

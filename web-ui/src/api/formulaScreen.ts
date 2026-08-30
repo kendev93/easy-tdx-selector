@@ -1,6 +1,8 @@
 import type {
   CustomFormulaMetadata,
   FormulaScreenMetadata,
+  InstrumentBoard,
+  InstrumentType,
   JobState,
   MarketSyncJobState,
   ResultsMeta,
@@ -74,7 +76,12 @@ export async function getResults(jobId: string): Promise<{ results: ScreenResult
   return { results: response.data, meta: response.meta }
 }
 
-export async function createSyncJob(payload: { universe?: 'all' | 'sh' | 'sz'; bars?: number; vipdoc_path?: string } = {}): Promise<{ job_id: string; status: string }> {
+export async function createSyncJob(payload: {
+  universe?: 'all' | 'sh' | 'sz'
+  bars?: number
+  instrument_types?: InstrumentType[]
+  boards?: InstrumentBoard[]
+} = {}): Promise<{ job_id: string; status: string }> {
   const response = await requestAt<{ data: { job_id: string; status: string } }>(`${API_ROOT}/market-data/sync`, {
     method: 'POST',
     body: JSON.stringify(payload),

@@ -1,7 +1,15 @@
-"""Adapters that isolate upstream easy_tdx APIs from application code."""
+"""Compatibility exports for application-owned market-data adapters."""
 
-from .easy_tdx_adapter import EasyTdxAdapter, StockRef, is_supported_a_stock, suggested_vipdoc_path
-from .market_sync import EasyTdxMarketSync, MarketSyncConfig, MarketSyncReport
+from selector_app.market_data.local_adapter import (
+    LocalDayMarketDataAdapter,
+    StockRef,
+    is_supported_a_stock,
+    suggested_vipdoc_path,
+)
+
+from .market_sync import EasyTdxMarketSync, MarketSyncConfig, MarketSyncReport, TdxMarketSync
+
+EasyTdxAdapter = LocalDayMarketDataAdapter
 
 __all__ = [
     "EasyTdxAdapter",
@@ -9,6 +17,8 @@ __all__ = [
     "MarketSyncConfig",
     "MarketSyncReport",
     "StockRef",
+    "LocalDayMarketDataAdapter",
     "is_supported_a_stock",
     "suggested_vipdoc_path",
+    "TdxMarketSync",
 ]

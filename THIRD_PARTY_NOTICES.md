@@ -1,10 +1,16 @@
 # Third-party notices
 
-## easy-tdx
+## TDX 协议和 `.day` 解析参考
 
-本项目将 `easy-tdx==1.20.8` 作为 Python 依赖使用，并未复制或修改其源码。easy-tdx 是独立的开源项目；本项目不是 easy-tdx 官方项目。
+本项目运行时不依赖 `easy-tdx`。`selector_app/tdx_protocol/` 和
+`selector_app/market_data/day_format.py` 的协议字段、`.day` 记录格式、价格/成交量系数和部分容错行为，参考并改写自 MIT 许可的
+`easy-tdx`/`pytdx`/`xmtdx` 相关实现与测试；项目没有把上游包作为依赖，也没有在运行时导入其模块。
 
 上游项目及其相关声明：
+
+- [`easy_tdx`](https://github.com/handsomejustin/easy_tdx)
+- [`pytdx`](https://github.com/rainx/pytdx)
+- [`xmtdx`](https://github.com/rainx/xmtdx)
 
 ```text
 MIT License
@@ -30,7 +36,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-easy-tdx also documents inspiration/attribution for `pytdx` and `xmtdx`; their MIT notices remain part of the upstream distribution. Refer to the pinned dependency's own `LICENSE` and `NOTICE` files for the complete attribution text.
+easy-tdx also documents inspiration/attribution for `pytdx` and `xmtdx`; their MIT notices remain applicable to the portions derived from those references. The corresponding upstream license and notice files should be consulted for complete attribution text.
+
+## DuckDB
+
+本项目使用 DuckDB Python 包作为嵌入式本地数据库。DuckDB 以 MIT License 发布；其完整许可证文本随安装包和官方仓库分发。本项目没有修改 DuckDB 源码。
 
 ## 本项目许可证
 

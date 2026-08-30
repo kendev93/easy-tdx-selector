@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchLocalChart, fetchLocalInstruments } from './marketData'
+import {
+  createLocalImport,
+  createOnlineSync,
+  fetchLocalChart,
+  fetchLocalInstruments,
+  fetchStoreStatus,
+  getMarketDataJob,
+} from './marketData'
 
 describe('market data API', () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -8,19 +15,19 @@ describe('market data API', () => {
   it('fetches paginated local instruments and chart data', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        data: [{ market: 'SH', code: '600000', bars: 300, data_start: '2020-01-01', data_end: '2024-12-31', last_close: 12.5, error: null }],
+        data: [{ market: 'SH', code: '600000', instrument_type: 'stock', bars: 300, data_start: '2020-01-01', data_end: '2024-12-31', last_close: 12.5, error: null }],
         meta: { total: 1, page: 1, page_size: 20, pages: 1 },
       }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         data: { market: 'SH', code: '600000', period: 'monthly', total_daily_bars: 300, bars: 12, available_data_start: '2020-01-01', available_data_end: '2024-12-31', data_start: '2024-01-31', data_end: '2024-12-31', candles: [] },
       }), { status: 200 }))
 
-    await expect(fetchLocalInstruments({ vipdoc_path: '/data/vipdoc', market: 'SH', keyword: '600', page: 1, page_size: 20 })).resolves.toMatchObject({ meta: { total: 1 } })
-    await expect(fetchLocalChart({ vipdoc_path: '/data/vipdoc', market: 'SH', code: '600000', period: 'monthly', start_date: '2024-01-01', end_date: '2024-12-31' })).resolves.toMatchObject({ period: 'monthly', code: '600000' })
+    await expect(fetchLocalInstruments({ market: 'SH', keyword: '600', page: 1, page_size: 20 })).resolves.toMatchObject({ meta: { total: 1 } })
+    await expect(fetchLocalChart({ market: 'SH', code: '600000', period: 'monthly', start_date: '2024-01-01', end_date: '2024-12-31' })).resolves.toMatchObject({ period: 'monthly', code: '600000' })
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      '/api/v1/market-data/local/instruments?vipdoc_path=%2Fdata%2Fvipdoc&market=SH&keyword=600&page=1&page_size=20',
-      '/api/v1/market-data/local/SH/600000/bars?vipdoc_path=%2Fdata%2Fvipdoc&period=monthly&start_date=2024-01-01&end_date=2024-12-31',
+      '/api/v1/market-data/local/instruments?market=SH&keyword=600&page=1&page_size=20',
+      '/api/v1/market-data/local/SH/600000/bars?period=monthly&start_date=2024-01-01&end_date=2024-12-31',
     ])
   })
 
@@ -31,6 +38,29 @@ describe('market data API', () => {
       name: 'FormulaScreenApiError',
       message: '请求失败，请检查本地行情目录后重试。',
       status: 422,
+    })
+  })
+
+  it('starts local import and online sync jobs and reads store status', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'local-1', status: 'queued' } }), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'online-1', status: 'queued' } }), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { database_path: '/data/market/market.duckdb', schema_version: 1, instrument_count: 2, bar_count: 10, data_start: '2024-01-01', data_end: '2024-01-10', last_local_import_at: null, last_online_sync_at: null } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'local-1', status: 'completed', progress: 1, total_candidates: 1, total_scanned: 1, errors: 0, error: null, result: null } }), { status: 200 }))
+
+    await expect(createLocalImport({ vipdoc_path: '/data/vipdoc', universe: 'all' })).resolves.toMatchObject({ job_id: 'local-1' })
+    await expect(createOnlineSync({ universe: 'all', bars: 800 })).resolves.toMatchObject({ job_id: 'online-1' })
+    await expect(fetchStoreStatus()).resolves.toMatchObject({ instrument_count: 2 })
+    await expect(getMarketDataJob('local-1')).resolves.toMatchObject({ status: 'completed' })
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/market-data/import-local',
+      '/api/v1/market-data/sync-online',
+      '/api/v1/market-data/store',
+      '/api/v1/market-data/jobs/local-1',
+    ])
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ vipdoc_path: '/data/vipdoc', universe: 'all' }),
     })
   })
 })

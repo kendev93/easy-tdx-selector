@@ -19,7 +19,8 @@ const baseForm = (): ScreenFormState => ({
   minimumMatches: 2,
   universe: 'all',
   universeFile: '',
-  vipdocPath: '/data/vipdoc',
+  instrumentTypes: [],
+  boards: [],
   workers: 2,
   period: 'daily',
   formulaText: '',
@@ -32,9 +33,9 @@ describe('formula screen form helpers', () => {
       'indicator_three.prepare_rally',
       'indicator_three.accumulation_zone',
     ])
-    saveForm({ ...baseForm(), vipdocPath: '/data/vipdoc' })
+    saveForm(baseForm())
 
-    expect(loadSavedForm()).toMatchObject({ vipdocPath: '/data/vipdoc', mode: 'preset' })
+    expect(loadSavedForm()).toMatchObject({ mode: 'preset' })
   })
 
   it('rejects an empty selection and invalid minimum matches', () => {
@@ -53,7 +54,6 @@ describe('formula screen form helpers', () => {
       minimum_matches: 2,
       universe: 'custom',
       universe_file: '/tmp/stocks.txt',
-      vipdoc_path: '/data/vipdoc',
       workers: 2,
       period: 'daily',
       formula_text: null,
@@ -72,6 +72,22 @@ describe('formula screen form helpers', () => {
     }])
     expect(csv).toContain('"matched_signals"')
     expect(csv).toContain('600000')
+  })
+
+  it('includes opt-in instrument and board filters while leaving empty filters unrestricted', () => {
+    expect(buildScanPayload(baseForm())).not.toHaveProperty('instrument_types')
+    expect(buildScanPayload(baseForm())).not.toHaveProperty('boards')
+
+    const filtered = {
+      ...baseForm(),
+      instrumentTypes: ['stock'] as const,
+      boards: ['main', 'chinext'] as const,
+    }
+
+    expect(buildScanPayload(filtered)).toMatchObject({
+      instrument_types: ['stock'],
+      boards: ['main', 'chinext'],
+    })
   })
 
   it('filters persisted signal ids that are no longer in metadata', () => {

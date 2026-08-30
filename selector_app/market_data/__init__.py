@@ -1,10 +1,38 @@
-"""Local market-data browsing services."""
+"""Local market-data browsing and DuckDB storage services."""
 
+from .adapter import DuckDbMarketDataAdapter, MarketDataAdapter
+from .day_format import (
+    DayFileError,
+    DayFileResult,
+    classify_board,
+    classify_instrument,
+    discover_day_files,
+    read_day_file,
+)
+from .day_importer import LocalDayImporter
+from .local_adapter import LocalDayMarketDataAdapter, suggested_vipdoc_path
+from .models import (
+    DataStoreStatus,
+    ImportReport,
+    InstrumentBoard,
+    InstrumentRef,
+    InstrumentType,
+    MarketCode,
+    StockRef,
+)
+from .repository import MarketDataRepository
+from .scope import InstrumentScope
 from .service import (
     ChartPeriod,
     LocalInstrumentPage,
     LocalMarketChart,
     LocalMarketDataService,
+)
+from .store import (
+    DuckDbMarketDataStore,
+    MarketDataStoreError,
+    default_data_dir,
+    default_database_path,
 )
 
 __all__ = [
@@ -12,4 +40,28 @@ __all__ = [
     "LocalInstrumentPage",
     "LocalMarketChart",
     "LocalMarketDataService",
+    "DataStoreStatus",
+    "ImportReport",
+    "InstrumentRef",
+    "StockRef",
+    "InstrumentType",
+    "InstrumentBoard",
+    "MarketCode",
+    "DayFileError",
+    "DayFileResult",
+    "classify_instrument",
+    "classify_board",
+    "discover_day_files",
+    "read_day_file",
+    "LocalDayImporter",
+    "DuckDbMarketDataAdapter",
+    "MarketDataAdapter",
+    "LocalDayMarketDataAdapter",
+    "suggested_vipdoc_path",
+    "DuckDbMarketDataStore",
+    "MarketDataStoreError",
+    "MarketDataRepository",
+    "InstrumentScope",
+    "default_data_dir",
+    "default_database_path",
 ]

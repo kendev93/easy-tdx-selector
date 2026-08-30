@@ -16,7 +16,7 @@ from selector_app.strategy_fitness.service import (
     StrategyFitnessService,
 )
 
-from ..schemas import StrategyFitnessRequest, validate_vipdoc_path
+from ..schemas import StrategyFitnessRequest
 
 router = APIRouter(prefix="/strategy-fitness", tags=["strategy-fitness"])
 
@@ -53,7 +53,6 @@ def create_strategy_fitness(
     request: Request,
 ) -> JSONResponse:
     try:
-        validate_vipdoc_path(payload.vipdoc_path)
         if payload.universe == "custom" and payload.universe_file:
             if not Path(payload.universe_file).expanduser().is_file():
                 raise ValueError(f"自定义股票列表文件不存在: {payload.universe_file}")

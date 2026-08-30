@@ -10,6 +10,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
+from selector_app.market_data.models import InstrumentBoard, InstrumentType
+from selector_app.market_data.scope import InstrumentScope
+
 PortfolioUniverse = Literal["all", "sh", "sz", "custom"]
 RankOrder = Literal["asc", "desc"]
 RebalanceFrequency = Literal["daily", "weekly", "monthly"]
@@ -34,6 +37,8 @@ class PortfolioBacktestConfig:
     rebalance_frequency: RebalanceFrequency = "daily"
     execution: ExecutionMode = "next_open"
     universe_file: str | Path | None = None
+    instrument_types: tuple[InstrumentType, ...] | None = None
+    boards: tuple[InstrumentBoard, ...] | None = None
     formula_text: str | None = None
     formula_parameters: Mapping[str, float] = field(default_factory=dict)
     sell_signal: str | None = None
@@ -60,6 +65,13 @@ class PortfolioBacktestConfig:
     def __post_init__(self) -> None:
         if self.universe not in {"all", "sh", "sz", "custom"}:
             raise ValueError("不支持的组合回测范围")
+        scope = InstrumentScope.from_values(
+            universe=self.universe,
+            instrument_types=self.instrument_types,
+            boards=self.boards,
+        )
+        object.__setattr__(self, "instrument_types", scope.instrument_types)
+        object.__setattr__(self, "boards", scope.boards)
         if not self.selected_signals:
             raise ValueError("至少需要一个选股条件")
         if len(set(self.selected_signals)) != len(self.selected_signals):

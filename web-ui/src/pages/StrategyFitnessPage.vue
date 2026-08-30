@@ -10,6 +10,8 @@ import type {
   FitnessPhaseMetrics,
   FitnessLabel,
   FormulaScreenMetadata,
+  InstrumentBoard,
+  InstrumentType,
   SignalDefinition,
   StrategyFitnessJobState,
   StrategyFitnessPayload,
@@ -20,6 +22,23 @@ import type {
   ValueDefinition,
 } from '../types'
 
+const INSTRUMENT_TYPE_OPTIONS: { key: InstrumentType; label: string }[] = [
+  { key: 'stock', label: '股票/B股' },
+  { key: 'fund', label: '基金/ETF' },
+  { key: 'index', label: '指数' },
+  { key: 'bond', label: '债券' },
+]
+
+const BOARD_OPTIONS: { key: InstrumentBoard; label: string }[] = [
+  { key: 'main', label: '主板' },
+  { key: 'star', label: '科创板' },
+  { key: 'chinext', label: '创业板' },
+  { key: 'b_share', label: 'B股' },
+  { key: 'fund', label: '基金/ETF' },
+  { key: 'index', label: '指数' },
+  { key: 'bond', label: '债券' },
+]
+
 interface FitnessFormState {
   mode: 'preset' | 'custom'
   selectedSignals: string[]
@@ -27,7 +46,6 @@ interface FitnessFormState {
   minimumMatches: number | null
   universe: Universe
   universeFile: string
-  vipdocPath: string
   rankingValue: string
   rankOrder: 'asc' | 'desc'
   formulaText: string
@@ -67,7 +85,8 @@ const form = reactive<FitnessFormState>({
   minimumMatches: null,
   universe: 'all',
   universeFile: '',
-  vipdocPath: '',
+  instrumentTypes: [] as InstrumentType[],
+  boards: [] as InstrumentBoard[],
   rankingValue: '',
   rankOrder: 'desc',
   formulaText: '',
@@ -163,6 +182,18 @@ function toggleSignal(signalId: string, checked: boolean): void {
   if (errors.value.selectedSignals) errors.value = { ...errors.value, selectedSignals: '' }
 }
 
+function toggleInstrumentType(type: InstrumentType): void {
+  form.instrumentTypes = form.instrumentTypes.includes(type)
+    ? form.instrumentTypes.filter((item) => item !== type)
+    : [...form.instrumentTypes, type]
+}
+
+function toggleBoard(board: InstrumentBoard): void {
+  form.boards = form.boards.includes(board)
+    ? form.boards.filter((item) => item !== board)
+    : [...form.boards, board]
+}
+
 async function parseCustomFormula(): Promise<void> {
   customParseError.value = ''
   if (!form.formulaText.trim()) {
@@ -204,7 +235,6 @@ function validate(): Record<string, string> {
     next.minimumMatches = '至少满足数量不能超过已选择条件数。'
   }
   if (!form.rankingValue) next.rankingValue = '请选择用于记录策略上下文的指标输出。'
-  if (!form.vipdocPath.trim()) next.vipdocPath = '请输入通达信 vipdoc 数据目录。'
   if (form.universe === 'custom' && !form.universeFile.trim()) next.universeFile = '请输入自定义股票列表文件。'
   if (form.mode === 'custom') {
     if (!form.formulaText.trim()) next.formulaText = '请输入通达信公式。'
@@ -240,9 +270,10 @@ function validate(): Record<string, string> {
 
 function buildPayload(): StrategyFitnessPayload {
   return {
-    vipdoc_path: form.vipdocPath.trim(),
     universe: form.universe,
     universe_file: form.universe === 'custom' ? form.universeFile.trim() : null,
+    ...(form.instrumentTypes.length > 0 ? { instrument_types: [...form.instrumentTypes] } : {}),
+    ...(form.boards.length > 0 ? { boards: [...form.boards] } : {}),
     selected_signals: [...form.selectedSignals],
     combine_mode: form.combineMode,
     minimum_matches: form.combineMode === 'at_least' ? form.minimumMatches : null,
@@ -276,7 +307,7 @@ function buildPayload(): StrategyFitnessPayload {
 
 function apiMessage(error: unknown): string {
   if (error instanceof FormulaScreenApiError) return error.message
-  return '策略适配性评估失败，请检查后端服务、数据目录和配置后重试。'
+  return '策略适配性评估失败，请检查本地 DuckDB 数据和配置后重试。'
 }
 
 async function submit(): Promise<void> {
@@ -347,7 +378,6 @@ function downloadResult(): void {
 onMounted(async () => {
   try {
     metadata.value = await fetchMetadata()
-    form.vipdocPath = metadata.value.default_vipdoc_path ?? '/data/vipdoc'
     resetPresetDefaults()
   } catch (error) {
     message.value = apiMessage(error)
@@ -390,12 +420,13 @@ watch(() => form.formulaText, (value) => {
 
       <div class="workspace-grid fitness-grid">
         <form class="config-panel panel fitness-config" data-testid="fitness-config" @submit.prevent="submit">
+          <div class="scope-config inline-scope-config" data-testid="fitness-scope"><div class="scope-options"><span>证券类型</span><label v-for="option in INSTRUMENT_TYPE_OPTIONS" :key="option.key"><input type="checkbox" :data-testid="`fitness-scope-type-${option.key}`" :checked="form.instrumentTypes.includes(option.key)" @change="toggleInstrumentType(option.key)">{{ option.label }}</label></div><div class="scope-options"><span>板块</span><label v-for="option in BOARD_OPTIONS" :key="option.key"><input type="checkbox" :data-testid="`fitness-scope-board-${option.key}`" :checked="form.boards.includes(option.key)" @change="toggleBoard(option.key)">{{ option.label }}</label></div><small class="scope-helper">未勾选表示全部；类型和板块同时选择时取交集。</small></div>
           <div class="panel-heading"><div><span class="section-kicker">01 / CONFIGURE</span><h2>评估配置</h2></div><span class="required-hint">* 必填</span></div>
           <div class="formula-mode-tabs" role="tablist" aria-label="公式来源"><button type="button" :class="{ active: form.mode === 'preset' }" data-testid="fitness-mode-preset" role="tab" :aria-selected="form.mode === 'preset'" @click="setMode('preset')">预置指标</button><button type="button" :class="{ active: form.mode === 'custom' }" data-testid="fitness-mode-custom" role="tab" :aria-selected="form.mode === 'custom'" @click="setMode('custom')">自定义公式</button></div>
 
           <fieldset v-if="form.mode === 'custom'" class="form-section custom-formula-section"><legend>粘贴通达信公式</legend><textarea v-model="form.formulaText" data-testid="fitness-formula" rows="6" spellcheck="false" placeholder="例如：买入:CROSS(C,MA(C,20)); 卖出:CROSS(MA(C,20),C); 强度:C/MA(C,20);"></textarea><button class="secondary-button" data-testid="fitness-parse-formula" type="button" :disabled="customParseLoading" @click="parseCustomFormula">{{ customParseLoading ? '解析中…' : '解析公式' }}</button><p class="helper">命名条件可用于买卖，命名数值可用于排序和指标卖出。</p><p v-if="customParseError" class="field-error">{{ customParseError }}</p><div v-if="customMetadata" class="custom-formula-meta"><span>{{ customMetadata.parameters.length }} 个参数</span><span>{{ customMetadata.signals.length }} 个信号</span><span>{{ customMetadata.values?.length ?? 0 }} 个指标输出</span></div><div v-if="customMetadata?.parameters.length" class="parameter-grid"><div v-for="parameter in customMetadata.parameters" :key="parameter.name"><label :for="`fitness-param-${parameter.name}`">{{ parameter.name }}</label><input :id="`fitness-param-${parameter.name}`" v-model.number="form.formulaParameters[parameter.name]" :data-testid="`fitness-param-${parameter.name}`" type="number" :min="parameter.minimum" :max="parameter.maximum" :step="parameter.step"></div></div><p v-if="errors.formulaText" class="field-error">{{ errors.formulaText }}</p><p v-if="errors.formulaParameters" class="field-error">{{ errors.formulaParameters }}</p></fieldset>
 
-          <fieldset class="form-section"><legend>数据与选股</legend><label for="fitness-vipdoc-path">vipdoc 数据目录 <span class="required">*</span></label><input id="fitness-vipdoc-path" v-model="form.vipdocPath" data-testid="fitness-vipdoc-path" type="text" placeholder="/data/vipdoc" autocomplete="off"><p v-if="errors.vipdocPath" class="field-error">{{ errors.vipdocPath }}</p><div class="compact-fields fitness-fields-top"><div><label for="fitness-universe">股票范围</label><select id="fitness-universe" v-model="form.universe" data-testid="fitness-universe"><option value="all">沪深 A 股</option><option value="sh">仅上海</option><option value="sz">仅深圳</option><option value="custom">自定义列表</option></select></div><div v-if="form.universe === 'custom'"><label for="fitness-universe-file">列表文件</label><input id="fitness-universe-file" v-model="form.universeFile" data-testid="fitness-universe-file" type="text" placeholder="每行 SH 600000"></div></div><p v-if="errors.universeFile" class="field-error">{{ errors.universeFile }}</p><div v-if="availableSignals.length === 0" class="inline-empty">请先解析公式，或等待预置指标加载。</div><div v-for="signal in availableSignals" :key="signal.id" class="signal-option"><input :id="`fitness-signal-${signal.id}`" :data-testid="`fitness-signal-${signal.id}`" type="checkbox" :checked="form.selectedSignals.includes(signal.id)" @change="toggleSignal(signal.id, ($event.target as HTMLInputElement).checked)"><span class="fake-checkbox" aria-hidden="true"></span><label class="signal-copy" :for="`fitness-signal-${signal.id}`"><strong>{{ signal.display_name }}</strong><small>{{ signal.description }}</small></label></div><p v-if="errors.selectedSignals" class="field-error">{{ errors.selectedSignals }}</p><div class="compact-fields fitness-fields-top"><div><label for="fitness-combine-mode">条件组合</label><select id="fitness-combine-mode" v-model="form.combineMode" data-testid="fitness-combine-mode"><option value="all">全部满足</option><option value="any">任一满足</option><option value="at_least">至少满足 N 个</option></select></div><div v-if="form.combineMode === 'at_least'"><label for="fitness-minimum-matches">至少满足数量</label><input id="fitness-minimum-matches" v-model.number="form.minimumMatches" data-testid="fitness-minimum-matches" type="number" min="1" :max="Math.max(form.selectedSignals.length, 1)"></div></div><p v-if="errors.minimumMatches" class="field-error">{{ errors.minimumMatches }}</p></fieldset>
+          <fieldset class="form-section"><legend>数据与选股</legend><p class="helper">读取已经导入本地 DuckDB 的日线，不会上传行情文件。请先在“本地行情”页面导入数据。</p><div class="compact-fields fitness-fields-top"><div><label for="fitness-universe">品种范围</label><select id="fitness-universe" v-model="form.universe" data-testid="fitness-universe"><option value="all">沪深全部品种</option><option value="sh">仅上海</option><option value="sz">仅深圳</option><option value="custom">自定义列表</option></select></div><div v-if="form.universe === 'custom'"><label for="fitness-universe-file">列表文件</label><input id="fitness-universe-file" v-model="form.universeFile" data-testid="fitness-universe-file" type="text" placeholder="每行 SH 600000"></div></div><p v-if="errors.universeFile" class="field-error">{{ errors.universeFile }}</p><div v-if="availableSignals.length === 0" class="inline-empty">请先解析公式，或等待预置指标加载。</div><div v-for="signal in availableSignals" :key="signal.id" class="signal-option"><input :id="`fitness-signal-${signal.id}`" :data-testid="`fitness-signal-${signal.id}`" type="checkbox" :checked="form.selectedSignals.includes(signal.id)" @change="toggleSignal(signal.id, ($event.target as HTMLInputElement).checked)"><span class="fake-checkbox" aria-hidden="true"></span><label class="signal-copy" :for="`fitness-signal-${signal.id}`"><strong>{{ signal.display_name }}</strong><small>{{ signal.description }}</small></label></div><p v-if="errors.selectedSignals" class="field-error">{{ errors.selectedSignals }}</p><div class="compact-fields fitness-fields-top"><div><label for="fitness-combine-mode">条件组合</label><select id="fitness-combine-mode" v-model="form.combineMode" data-testid="fitness-combine-mode"><option value="all">全部满足</option><option value="any">任一满足</option><option value="at_least">至少满足 N 个</option></select></div><div v-if="form.combineMode === 'at_least'"><label for="fitness-minimum-matches">至少满足数量</label><input id="fitness-minimum-matches" v-model.number="form.minimumMatches" data-testid="fitness-minimum-matches" type="number" min="1" :max="Math.max(form.selectedSignals.length, 1)"></div></div><p v-if="errors.minimumMatches" class="field-error">{{ errors.minimumMatches }}</p></fieldset>
 
           <fieldset class="form-section"><legend>策略输出</legend><label for="fitness-ranking-value">记录指标输出 <span class="required">*</span></label><select id="fitness-ranking-value" v-model="form.rankingValue" data-testid="fitness-ranking-value" :disabled="availableValues.length === 0"><option value="" disabled>请选择指标输出</option><option v-for="value in availableValues" :key="value.id" :value="value.id">{{ value.display_name }} · {{ value.id }}</option></select><p v-if="errors.rankingValue" class="field-error">{{ errors.rankingValue }}</p><div class="compact-fields fitness-fields-top"><div><label for="fitness-rank-order">组合参考排序</label><select id="fitness-rank-order" v-model="form.rankOrder" data-testid="fitness-rank-order"><option value="desc">从高到低</option><option value="asc">从低到高</option></select></div><div><label>用途</label><p class="field-static">适配性评估不使用当前排序值决定单股交易；它用于记录策略上下文。</p></div></div></fieldset>
 

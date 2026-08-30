@@ -11,7 +11,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
-from selector_app.adapters.easy_tdx_adapter import MarketCode, is_supported_a_stock
+from selector_app.market_data.day_format import classify_board, classify_instrument
+from selector_app.market_data.models import InstrumentBoard, InstrumentType, MarketCode
 
 ExecutionMode = Literal["next_open", "next_close"]
 PositionMode = Literal["full", "fixed"]
@@ -41,6 +42,8 @@ class BacktestConfig:
     execution: ExecutionMode = "next_open"
     position_mode: PositionMode = "full"
     fixed_size: int | None = None
+    instrument_type: InstrumentType | None = None
+    board: InstrumentBoard | None = None
 
     def __post_init__(self) -> None:
         code = self.code.strip()
@@ -48,8 +51,14 @@ class BacktestConfig:
         sell_signal = self.sell_signal.strip()
         if self.market not in {"SH", "SZ"} or not _CODE_PATTERN.fullmatch(code):
             raise ValueError("股票市场和代码格式无效")
-        if not is_supported_a_stock(self.market, code):
-            raise ValueError(f"不支持回测的股票代码: {self.market} {code}")
+        detected_type = classify_instrument(self.market, code)
+        detected_board = classify_board(self.market, code)
+        if detected_type is None or detected_board is None:
+            raise ValueError(f"不支持回测的行情品种: {self.market} {code}")
+        if self.instrument_type is not None and self.instrument_type != detected_type:
+            raise ValueError("回测品种类型与市场代码不一致")
+        if self.board is not None and self.board != detected_board:
+            raise ValueError("回测板块与市场代码不一致")
         if not buy_signal or not sell_signal:
             raise ValueError("买入和卖出信号不能为空")
         if buy_signal == sell_signal:
@@ -82,6 +91,8 @@ class BacktestConfig:
         elif self.fixed_size is not None:
             raise ValueError("全仓模式不应设置固定股数")
         object.__setattr__(self, "code", code)
+        object.__setattr__(self, "instrument_type", detected_type)
+        object.__setattr__(self, "board", detected_board)
         object.__setattr__(self, "buy_signal", buy_signal)
         object.__setattr__(self, "sell_signal", sell_signal)
         formula_text = self.formula_text.strip() if self.formula_text else None

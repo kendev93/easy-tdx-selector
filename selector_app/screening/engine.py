@@ -1,16 +1,15 @@
-"""Formula selection engine; no web or easy_tdx imports leak into this layer."""
+"""Formula selection engine; no web or upstream protocol imports leak here."""
 
 from __future__ import annotations
 
 import logging
 from collections import Counter
-from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import pandas as pd
 
-from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, MarketDataAdapter, StockRef
 from selector_app.formulas.common import validate_market_data
 from selector_app.formulas.custom import (
     ParsedFormula,
@@ -18,6 +17,10 @@ from selector_app.formulas.custom import (
     parse_formula,
 )
 from selector_app.formulas.registry import FORMULA_REGISTRY, FormulaRegistry
+from selector_app.market_data.adapter import DuckDbMarketDataAdapter, MarketDataAdapter
+from selector_app.market_data.day_format import classify_board, classify_instrument
+from selector_app.market_data.models import StockRef
+from selector_app.market_data.store import DuckDbMarketDataStore
 
 from .models import ScanConfig, ScanReport, ScreenMatch
 
@@ -113,15 +116,10 @@ def _evaluate_frame(
             matched_signals=matched_signals,
             match_count=len(matched_signals),
             indicator_values=indicator_values,
+            instrument_type=getattr(ref, "instrument_type", "stock"),
+            board=getattr(ref, "board", "main"),
         )
     )
-
-
-def _scan_one_process(ref: StockRef, config: ScanConfig) -> ScanOutcome:
-    adapter = EasyTdxAdapter()
-    frame = adapter.read_stock(ref)
-    parsed_formula = parse_formula(config.formula_text) if config.formula_text else None
-    return _evaluate_frame(ref, frame, config, FORMULA_REGISTRY, parsed_formula)
 
 
 class ScreenEngine:
@@ -132,7 +130,7 @@ class ScreenEngine:
         adapter: MarketDataAdapter | None = None,
         registry: FormulaRegistry | None = None,
     ) -> None:
-        self._adapter = adapter or EasyTdxAdapter()
+        self._adapter = adapter or DuckDbMarketDataAdapter(DuckDbMarketDataStore())
         self._registry = registry or FORMULA_REGISTRY
 
     def scan(
@@ -141,17 +139,14 @@ class ScreenEngine:
         progress_callback: ProgressCallback | None = None,
     ) -> ScanReport:
         parsed_formula = parse_formula(config.formula_text) if config.formula_text else None
-        refs = self._adapter.list_stock_refs(
-            config.vipdoc_path,
-            config.universe,
-            config.universe_file,
-        )
+        refs = self._list_refs(config)
         if not refs:
             if progress_callback is not None:
                 progress_callback(0, 0, ScanOutcome())
             return ScanReport(0, 0, 0, 0, 0, (), {}, {})
 
-        outcomes = self._scan_refs(refs, config, progress_callback, parsed_formula)
+        frames = self._batch_frames(refs)
+        outcomes = self._scan_refs(refs, config, progress_callback, parsed_formula, frames)
         results = tuple(outcome.result for outcome in outcomes if outcome.result is not None)
         failures = Counter(
             outcome.error_reason for outcome in outcomes if outcome.error_reason is not None
@@ -176,35 +171,34 @@ class ScreenEngine:
         config: ScanConfig,
         progress_callback: ProgressCallback | None,
         parsed_formula: ParsedFormula | None,
+        frames: Mapping[tuple[str, str], pd.DataFrame] | None = None,
     ) -> list[ScanOutcome]:
+        def evaluate(ref: StockRef) -> ScanOutcome:
+            if frames is None:
+                return self._scan_one(ref, config, parsed_formula)
+            frame = frames.get((ref.market, ref.code), pd.DataFrame())
+            return _evaluate_frame(ref, frame, config, self._registry, parsed_formula)
+
         if config.workers <= 1:
             outcomes: list[ScanOutcome] = []
             for current, ref in enumerate(refs, start=1):
-                outcome = self._scan_one(ref, config, parsed_formula)
+                try:
+                    outcome = evaluate(ref)
+                except Exception as exc:  # noqa: BLE001 - one bad stock must not abort scan
+                    logger.warning("扫描 %s (%s) 失败，已跳过", ref.code, ref.path, exc_info=True)
+                    outcome = ScanOutcome(error_reason=str(exc) or type(exc).__name__)
                 outcomes.append(outcome)
                 if progress_callback is not None:
                     progress_callback(current, len(refs), outcome)
             return outcomes
 
-        # The production adapter is process-safe and uses processes for CPU-heavy
-        # pandas formulas. Injected adapters (tests/embedding) use threads because
-        # arbitrary adapter instances are not guaranteed to be pickleable.
-        executor_type = (
-            ProcessPoolExecutor
-            if isinstance(self._adapter, EasyTdxAdapter) and self._registry is FORMULA_REGISTRY
-            else ThreadPoolExecutor
-        )
+        # Each worker opens its own DuckDB connection through the adapter. This
+        # avoids sharing a connection across threads/processes and keeps custom
+        # injected adapters usable in tests and embedding applications.
+        executor_type = ThreadPoolExecutor
         outcomes_by_index: dict[int, ScanOutcome] = {}
         with executor_type(max_workers=config.workers) as executor:
-            futures = {
-                executor.submit(
-                    _scan_one_process if executor_type is ProcessPoolExecutor else self._scan_one,
-                    ref,
-                    config,
-                    *(() if executor_type is ProcessPoolExecutor else (parsed_formula,)),
-                ): index
-                for index, ref in enumerate(refs)
-            }
+            futures = {executor.submit(evaluate, ref): index for index, ref in enumerate(refs)}
             completed = 0
             for future in as_completed(futures):
                 index = futures[future]
@@ -221,6 +215,43 @@ class ScreenEngine:
                     progress_callback(completed, len(refs), outcome)
         return [outcomes_by_index[index] for index in range(len(refs))]
 
+    def _list_refs(self, config: ScanConfig) -> list[StockRef]:
+        if not config.instrument_types and not config.boards:
+            return self._adapter.list_stock_refs(
+                config.vipdoc_path,
+                config.universe,
+                config.universe_file,
+            )
+        try:
+            refs = self._adapter.list_stock_refs(
+                config.vipdoc_path,
+                config.universe,
+                config.universe_file,
+                instrument_types=config.instrument_types or None,
+                boards=config.boards or None,
+            )
+        except TypeError as exc:
+            if "unexpected keyword" not in str(exc):
+                raise
+            refs = self._adapter.list_stock_refs(
+                config.vipdoc_path,
+                config.universe,
+                config.universe_file,
+            )
+        return [ref for ref in refs if _matches_scope(ref, config)]
+
+    def _batch_frames(self, refs: list[StockRef]) -> Mapping[tuple[str, str], pd.DataFrame] | None:
+        reader = getattr(self._adapter, "read_many_stocks", None)
+        if reader is None:
+            return None
+        combined = reader(refs)
+        frames: dict[tuple[str, str], pd.DataFrame] = {}
+        if combined.empty:
+            return frames
+        for key, group in combined.groupby(["market", "code"], sort=False):
+            frames[(str(key[0]), str(key[1]))] = group.reset_index(drop=True)
+        return frames
+
     def _scan_one(
         self,
         ref: StockRef,
@@ -233,3 +264,13 @@ class ScreenEngine:
         except Exception as exc:  # noqa: BLE001 - one bad stock must not abort scan
             logger.warning("扫描 %s (%s) 失败，已跳过", ref.code, ref.path, exc_info=True)
             return ScanOutcome(error_reason=str(exc) or type(exc).__name__)
+
+
+def _matches_scope(ref: StockRef, config: ScanConfig) -> bool:
+    board = classify_board(ref.market, ref.code) or getattr(ref, "board", "main")
+    instrument_type = classify_instrument(ref.market, ref.code) or getattr(
+        ref, "instrument_type", "stock"
+    )
+    return (not config.instrument_types or instrument_type in config.instrument_types) and (
+        not config.boards or board in config.boards
+    )

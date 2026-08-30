@@ -2,8 +2,25 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 
 import { createJob, createSyncJob, fetchMetadata, FormulaScreenApiError, getJob, getResults, getSyncJob, parseFormula } from '../api/formulaScreen'
-import type { CustomFormulaMetadata, FormulaScreenMetadata, JobState, MarketSyncJobState, ResultsMeta, ScreenFormState, ScreenResult } from '../types'
+import type { CustomFormulaMetadata, FormulaScreenMetadata, InstrumentBoard, InstrumentType, JobState, MarketSyncJobState, ResultsMeta, ScreenFormState, ScreenResult } from '../types'
 import { buildScanPayload, DEFAULT_PRESET_SIGNALS, filterKnownSignals, loadSavedForm, resultsToCsv, saveForm, signalDisplayName, validateScreenForm } from '../utils/formulaScreen'
+
+const INSTRUMENT_TYPE_OPTIONS: { key: InstrumentType; label: string }[] = [
+  { key: 'stock', label: '股票/B股' },
+  { key: 'fund', label: '基金/ETF' },
+  { key: 'index', label: '指数' },
+  { key: 'bond', label: '债券' },
+]
+
+const BOARD_OPTIONS: { key: InstrumentBoard; label: string }[] = [
+  { key: 'main', label: '主板' },
+  { key: 'star', label: '科创板' },
+  { key: 'chinext', label: '创业板' },
+  { key: 'b_share', label: 'B股' },
+  { key: 'fund', label: '基金/ETF' },
+  { key: 'index', label: '指数' },
+  { key: 'bond', label: '债券' },
+]
 
 const metadata = ref<FormulaScreenMetadata | null>(null)
 const customMetadata = ref<CustomFormulaMetadata | null>(null)
@@ -15,7 +32,8 @@ const form = reactive<ScreenFormState>({
   minimumMatches: savedForm.minimumMatches ?? 2,
   universe: savedForm.universe ?? 'all',
   universeFile: savedForm.universeFile ?? '',
-  vipdocPath: savedForm.vipdocPath ?? '',
+  instrumentTypes: savedForm.instrumentTypes ?? [],
+  boards: savedForm.boards ?? [],
   workers: savedForm.workers ?? 2,
   period: savedForm.period ?? 'daily',
   formulaText: savedForm.formulaText ?? '',
@@ -63,6 +81,18 @@ function toggleSignal(signalId: string, checked: boolean): void {
   else next.delete(signalId)
   form.selectedSignals = [...next]
   if (errors.value.selectedSignals) errors.value = { ...errors.value, selectedSignals: '' }
+}
+
+function toggleInstrumentType(type: InstrumentType): void {
+  form.instrumentTypes = form.instrumentTypes.includes(type)
+    ? form.instrumentTypes.filter((item) => item !== type)
+    : [...form.instrumentTypes, type]
+}
+
+function toggleBoard(board: InstrumentBoard): void {
+  form.boards = form.boards.includes(board)
+    ? form.boards.filter((item) => item !== board)
+    : [...form.boards, board]
 }
 
 function apiMessage(error: unknown): string {
@@ -127,7 +157,12 @@ async function syncMarketData(): Promise<void> {
   syncLoading.value = true
   message.value = ''
   try {
-    const created = await createSyncJob({ vipdoc_path: form.vipdocPath.trim() || undefined })
+    const universe = form.universe === 'custom' ? 'all' : form.universe
+    const created = await createSyncJob({
+      universe,
+      ...(form.instrumentTypes.length > 0 ? { instrument_types: [...form.instrumentTypes] } : {}),
+      ...(form.boards.length > 0 ? { boards: [...form.boards] } : {}),
+    })
     syncJob.value = {
       job_id: created.job_id,
       status: 'queued',
@@ -144,7 +179,7 @@ async function syncMarketData(): Promise<void> {
       if (state.status === 'completed') {
         const result = state.result
         message.value = result
-          ? `行情同步完成：写入 ${result.written_bars} 根，更新 ${result.updated_files} 个文件。`
+          ? `行情同步完成：写入 ${result.written_bars} 根，更新 ${result.updated_files} 个标的。`
           : '行情同步完成。'
         return
       }
@@ -154,7 +189,7 @@ async function syncMarketData(): Promise<void> {
   } catch (error) {
     message.value = error instanceof FormulaScreenApiError
       ? error.message
-      : '行情同步失败，请检查网络和 vipdoc 数据目录后重试。'
+      : '行情同步失败，请检查网络和 DuckDB 数据状态后重试。'
   } finally {
     syncLoading.value = false
   }
@@ -209,9 +244,6 @@ function exportCsv(): void {
 onMounted(async () => {
   try {
     metadata.value = await fetchMetadata()
-    if (!form.vipdocPath) {
-      form.vipdocPath = metadata.value.default_vipdoc_path ?? '/data/vipdoc'
-    }
     if (form.mode === 'preset') {
       form.selectedSignals = filterKnownSignals(
         form.selectedSignals,
@@ -267,7 +299,7 @@ watch(() => form.formulaText, (value) => {
           <h1>公式选股</h1>
           <p class="intro-copy">把通达信条件拆成可组合的信号，扫描已完成的日线 K 线。</p>
         </div>
-        <div class="intro-note"><span class="note-label">扫描范围</span><strong>SH / SZ A 股</strong><small>ETF、基金、指数与债券已排除</small></div>
+        <div class="intro-note"><span class="note-label">扫描范围</span><strong>DuckDB 全量行情</strong><small>信号筛选和回测统一读取本地数据仓库</small></div>
       </section>
 
       <div v-if="message" class="notice" :class="{ error: !message.includes('完成') }" role="alert" data-testid="screen-message">
@@ -308,14 +340,6 @@ watch(() => form.formulaText, (value) => {
             <p v-if="errors.formulaParameters" class="field-error">{{ errors.formulaParameters }}</p>
           </fieldset>
 
-          <fieldset class="form-section">
-            <legend>数据源</legend>
-            <label for="vipdoc-path">vipdoc 数据目录 <span class="required">*</span></label>
-            <input id="vipdoc-path" v-model="form.vipdocPath" data-testid="vipdoc-path" type="text" placeholder="例如 ~/new_tdx/vipdoc" autocomplete="off">
-            <p class="helper">{{ metadata?.data_directory_help ?? '默认使用 /data/vipdoc；也可以改成电脑上的实际目录。' }}</p>
-            <p v-if="errors.vipdocPath" class="field-error">{{ errors.vipdocPath }}</p>
-          </fieldset>
-
           <button class="advanced-toggle" data-testid="advanced-toggle" type="button" :aria-expanded="showAdvanced" @click="showAdvanced = !showAdvanced">
             <span>{{ showAdvanced ? '收起高级设置' : '高级设置' }}</span>
             <small>市场范围 · 条件组合 · 并发</small>
@@ -333,6 +357,11 @@ watch(() => form.formulaText, (value) => {
                 <input id="universe-file" v-model="form.universeFile" data-testid="universe-file" type="text" placeholder="每行 SH 600000 或 SZ 000001">
                 <p v-if="errors.universeFile" class="field-error">{{ errors.universeFile }}</p>
               </template>
+              <div class="scope-config inline-scope-config" data-testid="screen-scope">
+                <div class="scope-options"><span>证券类型</span><label v-for="option in INSTRUMENT_TYPE_OPTIONS" :key="option.key"><input type="checkbox" :data-testid="`screen-scope-type-${option.key}`" :checked="form.instrumentTypes.includes(option.key)" @change="toggleInstrumentType(option.key)">{{ option.label }}</label></div>
+                <div class="scope-options"><span>板块</span><label v-for="option in BOARD_OPTIONS" :key="option.key"><input type="checkbox" :data-testid="`screen-scope-board-${option.key}`" :checked="form.boards.includes(option.key)" @change="toggleBoard(option.key)">{{ option.label }}</label></div>
+                <small class="scope-helper">未勾选表示全部；类型和板块同时选择时取交集。</small>
+              </div>
             </fieldset>
 
             <fieldset class="form-section">
@@ -390,7 +419,7 @@ watch(() => form.formulaText, (value) => {
               <span v-if="syncLoading" class="spinner sync-spinner" aria-hidden="true"></span>
               {{ syncLoading ? '同步中…' : '同步最新行情' }}
             </button>
-            <p class="sync-helper">从通达信服务器获取最新已完成日线，并写入共享 vipdoc。</p>
+            <p class="sync-helper">从通达信服务器获取最新已完成日线，并写入本地 DuckDB。</p>
             <div v-if="syncLoading || syncJob" class="sync-progress" data-testid="sync-progress">
               <div class="sync-progress-heading"><span>{{ syncLoading ? '行情同步进度' : '最近一次同步' }}</span><strong>{{ syncProgressPercent }}%</strong></div>
               <div class="progress-track sync-progress-track"><span :style="{ width: `${syncProgressPercent}%` }"></span></div>
@@ -428,7 +457,7 @@ watch(() => form.formulaText, (value) => {
               <tbody>
                 <tr v-for="result in results" :key="`${result.market}-${result.code}`">
                   <td><span class="market-pill" :class="result.market.toLowerCase()">{{ result.market }}</span></td>
-                  <td><strong class="code">{{ result.code }}</strong></td>
+                  <td><strong class="code">{{ result.code }}</strong><small v-if="result.instrument_type" class="muted-code">{{ result.instrument_type }}</small></td>
                   <td class="muted-code">{{ result.signal_date }}</td>
                   <td><strong>{{ result.last_close.toFixed(2) }}</strong></td>
                   <td><div class="signal-tags"><span v-for="signal in result.matched_signals" :key="signal" class="signal-tag">{{ signalDisplayName(signal, metadata, customMetadata) }}</span><small>{{ result.match_count }} 条</small></div></td>

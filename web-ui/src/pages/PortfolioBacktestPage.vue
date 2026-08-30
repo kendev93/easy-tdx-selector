@@ -8,6 +8,8 @@ import type {
   CombineMode,
   CustomFormulaMetadata,
   FormulaScreenMetadata,
+  InstrumentBoard,
+  InstrumentType,
   PortfolioBacktestJobState,
   PortfolioBacktestPayload,
   PortfolioBacktestResult,
@@ -20,6 +22,23 @@ import type {
 } from '../types'
 import { signalDisplayName } from '../utils/formulaScreen'
 
+const INSTRUMENT_TYPE_OPTIONS: { key: InstrumentType; label: string }[] = [
+  { key: 'stock', label: '股票/B股' },
+  { key: 'fund', label: '基金/ETF' },
+  { key: 'index', label: '指数' },
+  { key: 'bond', label: '债券' },
+]
+
+const BOARD_OPTIONS: { key: InstrumentBoard; label: string }[] = [
+  { key: 'main', label: '主板' },
+  { key: 'star', label: '科创板' },
+  { key: 'chinext', label: '创业板' },
+  { key: 'b_share', label: 'B股' },
+  { key: 'fund', label: '基金/ETF' },
+  { key: 'index', label: '指数' },
+  { key: 'bond', label: '债券' },
+]
+
 interface PortfolioFormState {
   mode: 'preset' | 'custom'
   selectedSignals: string[]
@@ -27,7 +46,6 @@ interface PortfolioFormState {
   minimumMatches: number | null
   universe: Universe
   universeFile: string
-  vipdocPath: string
   rankingValue: string
   rankOrder: 'asc' | 'desc'
   maxPositions: number
@@ -69,7 +87,8 @@ const form = reactive<PortfolioFormState>({
   minimumMatches: null,
   universe: 'all',
   universeFile: '',
-  vipdocPath: '',
+  instrumentTypes: [] as InstrumentType[],
+  boards: [] as InstrumentBoard[],
   rankingValue: '',
   rankOrder: 'desc',
   maxPositions: 5,
@@ -200,6 +219,18 @@ function toggleSignal(signalId: string, checked: boolean): void {
   if (errors.value.selectedSignals) errors.value = { ...errors.value, selectedSignals: '' }
 }
 
+function toggleInstrumentType(type: InstrumentType): void {
+  form.instrumentTypes = form.instrumentTypes.includes(type)
+    ? form.instrumentTypes.filter((item) => item !== type)
+    : [...form.instrumentTypes, type]
+}
+
+function toggleBoard(board: InstrumentBoard): void {
+  form.boards = form.boards.includes(board)
+    ? form.boards.filter((item) => item !== board)
+    : [...form.boards, board]
+}
+
 async function parseCustomFormula(): Promise<void> {
   customParseError.value = ''
   if (!form.formulaText.trim()) {
@@ -262,7 +293,6 @@ function validate(): Record<string, string> {
       }
     }
   }
-  if (!form.vipdocPath.trim()) next.vipdocPath = '请输入通达信 vipdoc 数据目录。'
   if (form.startDate && form.endDate && form.startDate > form.endDate) next.endDate = '结束日期不能早于开始日期。'
   if (!Number.isFinite(form.maxPositions) || !Number.isInteger(form.maxPositions) || form.maxPositions < 1 || form.maxPositions > 100) {
     next.maxPositions = '持仓槽位必须是 1 到 100 的整数。'
@@ -289,9 +319,10 @@ function validate(): Record<string, string> {
 
 function buildPayload(): PortfolioBacktestPayload {
   return {
-    vipdoc_path: form.vipdocPath.trim(),
     universe: form.universe,
     universe_file: form.universe === 'custom' ? form.universeFile.trim() : null,
+    ...(form.instrumentTypes.length > 0 ? { instrument_types: [...form.instrumentTypes] } : {}),
+    ...(form.boards.length > 0 ? { boards: [...form.boards] } : {}),
     selected_signals: [...form.selectedSignals],
     combine_mode: form.combineMode,
     minimum_matches: form.combineMode === 'at_least' ? form.minimumMatches : null,
@@ -327,7 +358,7 @@ function buildPayload(): PortfolioBacktestPayload {
 
 function apiMessage(error: unknown): string {
   if (error instanceof FormulaScreenApiError) return error.message
-  return '组合回测失败，请检查后端服务、数据目录和配置后重试。'
+  return '组合回测失败，请检查本地 DuckDB 数据和配置后重试。'
 }
 
 async function submit(): Promise<void> {
@@ -402,7 +433,6 @@ function downloadResult(): void {
 onMounted(async () => {
   try {
     metadata.value = await fetchMetadata()
-    form.vipdocPath = metadata.value.default_vipdoc_path ?? '/data/vipdoc'
     resetPresetDefaults()
   } catch (error) {
     message.value = apiMessage(error)
@@ -478,15 +508,17 @@ watch(() => form.formulaText, (value) => {
 
           <fieldset class="form-section">
             <legend>数据范围</legend>
-            <label for="portfolio-vipdoc-path">vipdoc 数据目录 <span class="required">*</span></label>
-            <input id="portfolio-vipdoc-path" v-model="form.vipdocPath" data-testid="portfolio-vipdoc-path" type="text" placeholder="/data/vipdoc" autocomplete="off">
-            <p class="helper">读取已经下载到本地的沪深 A 股日线，不会上传行情文件。</p>
-            <p v-if="errors.vipdocPath" class="field-error">{{ errors.vipdocPath }}</p>
+            <p class="helper">读取已经导入本地 DuckDB 的日线，不会上传行情文件。请先在“本地行情”页面导入数据。</p>
             <div class="compact-fields portfolio-fields-top">
-              <div><label for="portfolio-universe">股票范围</label><select id="portfolio-universe" v-model="form.universe" data-testid="portfolio-universe"><option value="all">沪深 A 股</option><option value="sh">仅上海</option><option value="sz">仅深圳</option><option value="custom">自定义列表</option></select></div>
+              <div><label for="portfolio-universe">品种范围</label><select id="portfolio-universe" v-model="form.universe" data-testid="portfolio-universe"><option value="all">沪深全部品种</option><option value="sh">仅上海</option><option value="sz">仅深圳</option><option value="custom">自定义列表</option></select></div>
               <div><label for="portfolio-max-positions">持仓槽位</label><input id="portfolio-max-positions" v-model.number="form.maxPositions" data-testid="portfolio-max-positions" type="number" min="1" max="100" step="1"></div>
             </div>
             <div v-if="form.universe === 'custom'" class="portfolio-inline-field"><label for="portfolio-universe-file">股票列表文件</label><input id="portfolio-universe-file" v-model="form.universeFile" data-testid="portfolio-universe-file" type="text" placeholder="每行 SH 600000 或 SZ 000001"><p v-if="errors.universeFile" class="field-error">{{ errors.universeFile }}</p></div>
+            <div class="scope-config inline-scope-config" data-testid="portfolio-scope">
+              <div class="scope-options"><span>证券类型</span><label v-for="option in INSTRUMENT_TYPE_OPTIONS" :key="option.key"><input type="checkbox" :data-testid="`portfolio-scope-type-${option.key}`" :checked="form.instrumentTypes.includes(option.key)" @change="toggleInstrumentType(option.key)">{{ option.label }}</label></div>
+              <div class="scope-options"><span>板块</span><label v-for="option in BOARD_OPTIONS" :key="option.key"><input type="checkbox" :data-testid="`portfolio-scope-board-${option.key}`" :checked="form.boards.includes(option.key)" @change="toggleBoard(option.key)">{{ option.label }}</label></div>
+              <small class="scope-helper">未勾选表示全部；类型和板块同时选择时取交集。</small>
+            </div>
             <p v-if="errors.maxPositions" class="field-error">{{ errors.maxPositions }}</p>
           </fieldset>
 
@@ -565,7 +597,7 @@ watch(() => form.formulaText, (value) => {
           <div class="panel-heading results-heading"><div><span class="section-kicker">02 / RESULTS</span><h2>组合结果</h2></div><button v-if="result" class="secondary-button export-backtest" type="button" data-testid="export-portfolio-backtest" @click="downloadResult">导出 JSON</button></div>
           <div v-if="!result" class="empty-state" data-testid="portfolio-empty"><div class="empty-icon" aria-hidden="true">/</div><h3>{{ loading ? '正在运行动态组合回测…' : '还没有组合结果' }}</h3><p>{{ loading ? '正在逐股计算公式并模拟槽位补位，完成后显示净值与候选排名。' : '配置选股条件、排序指标和卖出规则后开始回测。' }}</p></div>
           <template v-else>
-            <div class="backtest-summary"><span class="result-badge">{{ result.universe === 'all' ? '沪深 A 股' : result.universe.toUpperCase() }}</span><span>{{ result.start_date }} → {{ result.end_date }}</span><span>{{ result.bars }} 个交易日</span><span>{{ result.processed }} / {{ result.total_candidates }} 只股票已处理</span><span>槽位 {{ result.max_positions }}</span><span>排序：{{ valueName(result.ranking_value) }} · {{ result.rank_order === 'desc' ? '高到低' : '低到高' }}</span><span v-if="result.fitness_filter_enabled" class="result-badge">适配分 ≥ {{ result.fitness_min_score }}</span></div>
+            <div class="backtest-summary"><span class="result-badge">{{ result.universe === 'all' ? '沪深全部品种' : result.universe.toUpperCase() }}</span><span>{{ result.start_date }} → {{ result.end_date }}</span><span>{{ result.bars }} 个交易日</span><span>{{ result.processed }} / {{ result.total_candidates }} 个标的已处理</span><span>槽位 {{ result.max_positions }}</span><span>排序：{{ valueName(result.ranking_value) }} · {{ result.rank_order === 'desc' ? '高到低' : '低到高' }}</span><span v-if="result.fitness_filter_enabled" class="result-badge">适配分 ≥ {{ result.fitness_min_score }}</span></div>
             <div class="metrics-strip portfolio-metrics">
               <div><span>总收益</span><strong :class="{ positive: (performanceValue('total_return') ?? 0) >= 0, negative: (performanceValue('total_return') ?? 0) < 0 }" data-testid="portfolio-total-return">{{ formatPercent(performanceValue('total_return')) }}</strong></div>
               <div><span>最大回撤</span><strong class="negative">{{ formatPercent(performanceValue('max_drawdown')) }}</strong></div>

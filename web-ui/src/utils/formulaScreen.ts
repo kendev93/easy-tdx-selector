@@ -2,6 +2,8 @@ import type {
   CombineMode,
   CustomFormulaMetadata,
   FormulaScreenMetadata,
+  InstrumentBoard,
+  InstrumentType,
   ScanPayload,
   ScreenFormState,
   ScreenResult,
@@ -34,7 +36,19 @@ export function loadSavedForm(): Partial<ScreenFormState> {
       safe.universe = parsed.universe
     }
     if (typeof parsed.universeFile === 'string') safe.universeFile = parsed.universeFile
-    if (typeof parsed.vipdocPath === 'string') safe.vipdocPath = parsed.vipdocPath
+    if (Array.isArray(parsed.instrumentTypes)) {
+      const values = parsed.instrumentTypes.filter((value): value is InstrumentType => (
+        value === 'stock' || value === 'fund' || value === 'index' || value === 'bond'
+      ))
+      safe.instrumentTypes = values
+    }
+    if (Array.isArray(parsed.boards)) {
+      const values = parsed.boards.filter((value): value is InstrumentBoard => (
+        value === 'main' || value === 'star' || value === 'chinext' || value === 'b_share'
+        || value === 'fund' || value === 'index' || value === 'bond'
+      ))
+      safe.boards = values
+    }
     if (typeof parsed.workers === 'number' && Number.isFinite(parsed.workers)) safe.workers = parsed.workers
     if (parsed.period === 'daily') safe.period = parsed.period
     if (typeof parsed.formulaText === 'string') safe.formulaText = parsed.formulaText
@@ -87,9 +101,6 @@ export function validateScreenForm(
   if (form.selectedSignals.length === 0) {
     errors.selectedSignals = '至少选择一个选股条件。'
   }
-  if (!form.vipdocPath.trim()) {
-    errors.vipdocPath = '请输入通达信 vipdoc 数据目录。'
-  }
   if (form.combineMode === 'at_least') {
     if (form.minimumMatches === null || !Number.isInteger(form.minimumMatches)) {
       errors.minimumMatches = '“至少满足 N 个”模式需要填写整数 N。'
@@ -110,11 +121,12 @@ export function buildScanPayload(form: ScreenFormState): ScanPayload {
     minimum_matches: form.combineMode === 'at_least' ? form.minimumMatches : null,
     universe: form.universe,
     universe_file: form.universe === 'custom' ? form.universeFile.trim() || null : null,
-    vipdoc_path: form.vipdocPath.trim(),
     workers: form.workers,
     period: form.period,
     formula_text: form.mode === 'custom' ? form.formulaText.trim() || null : null,
     formula_parameters: form.mode === 'custom' ? { ...form.formulaParameters } : {},
+    ...(form.instrumentTypes.length > 0 ? { instrument_types: [...form.instrumentTypes] } : {}),
+    ...(form.boards.length > 0 ? { boards: [...form.boards] } : {}),
   }
 }
 
@@ -141,11 +153,13 @@ export function signalDisplayName(
 }
 
 export function resultsToCsv(results: ScreenResult[]): string {
-  const header = ['market', 'code', 'signal_date', 'last_close', 'matched_signals', 'match_count', 'indicator_values']
+  const header = ['market', 'code', 'instrument_type', 'board', 'signal_date', 'last_close', 'matched_signals', 'match_count', 'indicator_values']
   const escape = (value: string): string => `"${value.replace(/"/g, '""')}"`
   const rows = results.map((result) => [
     result.market,
     result.code,
+    result.instrument_type ?? '',
+    result.board ?? '',
     String(result.signal_date),
     String(result.last_close),
     result.matched_signals.join(', '),

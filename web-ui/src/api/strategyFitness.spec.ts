@@ -14,7 +14,7 @@ describe('strategy fitness API', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { results: [] }, meta: {} }), { status: 200 }))
 
     await expect(createStrategyFitness({
-      vipdoc_path: '/data/vipdoc', universe: 'all', selected_signals: ['custom.buy'],
+      universe: 'all', selected_signals: ['custom.buy'],
       combine_mode: 'any', minimum_matches: null, ranking_value: 'custom.rank',
       sell_signal: 'custom.sell', stop_loss_pct: 0.08,
     })).resolves.toEqual({ job_id: 'fitness-1', status: 'queued' })

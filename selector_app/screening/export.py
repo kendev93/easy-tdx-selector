@@ -24,6 +24,8 @@ def report_to_csv(report: ScanReport) -> str:
         fieldnames=[
             "market",
             "code",
+            "instrument_type",
+            "board",
             "signal_date",
             "last_close",
             "matched_signals",

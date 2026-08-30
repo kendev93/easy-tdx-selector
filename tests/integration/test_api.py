@@ -3,12 +3,13 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from easy_tdx import SecurityBar
-from easy_tdx.offline import append_daily_bars
 from fastapi.testclient import TestClient
 
+from selector_app.market_data.day_importer import LocalDayImporter
+from selector_app.market_data.store import DuckDbMarketDataStore
 from selector_app.screening.models import ScanReport
 from selector_app.web.app import create_app
+from tests.day_helpers import write_day_records
 
 
 class EmptyEngine:
@@ -118,7 +119,7 @@ def test_custom_formula_unsafe_input_is_rejected(tmp_path: Path) -> None:
     assert "Traceback" not in response.text
 
 
-def test_invalid_combine_mode_and_missing_vipdoc_are_rejected(tmp_path: Path) -> None:
+def test_invalid_combine_mode_is_rejected_and_legacy_vipdoc_is_ignored(tmp_path: Path) -> None:
     payload = valid_payload(tmp_path)
     payload["combine_mode"] = "invalid"
     with TestClient(create_app(engine=EmptyEngine())) as client:
@@ -129,8 +130,7 @@ def test_invalid_combine_mode_and_missing_vipdoc_are_rejected(tmp_path: Path) ->
     payload["vipdoc_path"] = str(tmp_path / "does-not-exist")
     with TestClient(create_app(engine=EmptyEngine())) as client:
         missing_path = client.post("/api/v1/formula-screen/jobs", json=payload)
-    assert missing_path.status_code == 422
-    assert "不存在" in missing_path.json()["error"]["message"]
+    assert missing_path.status_code == 202
 
 
 def test_job_creation_status_and_empty_results() -> None:
@@ -163,9 +163,13 @@ def test_unknown_job_uses_the_standard_error_envelope() -> None:
     assert "detail" not in response.json()
 
 
-def test_market_sync_job_can_be_created_and_polled(tmp_path: Path, monkeypatch) -> None:
+def test_market_sync_job_can_be_created_and_polled() -> None:
+    received = {}
+
     class FakeMarketSync:
         def sync(self, config, progress_callback=None):
+            received["instrument_types"] = config.instrument_types
+            received["boards"] = config.boards
             if progress_callback:
                 progress_callback(1, 1)
             return {
@@ -177,11 +181,10 @@ def test_market_sync_job_can_be_created_and_polled(tmp_path: Path, monkeypatch) 
                 "failure_reasons": {},
             }
 
-    monkeypatch.setenv("SELECTOR_VIPDOC_PATH", str(tmp_path))
     with TestClient(create_app(engine=EmptyEngine(), market_sync=FakeMarketSync())) as client:
         response = client.post(
-            "/api/v1/market-data/sync",
-            json={"vipdoc_path": str(tmp_path)},
+            "/api/v1/market-data/sync-online",
+            json={"instrument_types": ["stock"], "boards": ["main"]},
         )
         assert response.status_code == 202
         job_id = response.json()["data"]["job_id"]
@@ -197,17 +200,55 @@ def test_market_sync_job_can_be_created_and_polled(tmp_path: Path, monkeypatch) 
 
     assert state["status"] == "completed"
     assert state["result"]["written_bars"] == 3
+    assert received == {"instrument_types": ("stock",), "boards": ("main",)}
 
 
-def test_market_sync_rejects_an_unavailable_data_directory(tmp_path: Path) -> None:
+def test_formula_screen_scope_filters_are_forwarded_to_the_engine(tmp_path: Path) -> None:
+    received = {}
+
+    class CapturingEngine:
+        def scan(self, config, progress_callback=None):
+            received["instrument_types"] = config.instrument_types
+            received["boards"] = config.boards
+            return ScanReport(
+                total_candidates=0,
+                total_scanned=0,
+                total_signals=0,
+                errors=0,
+                skipped=0,
+                results=(),
+                failure_reasons={},
+                skip_reasons={},
+            )
+
+    with TestClient(create_app(engine=CapturingEngine())) as client:
+        response = client.post(
+            "/api/v1/formula-screen/jobs",
+            json={
+                **valid_payload(tmp_path),
+                "instrument_types": ["stock"],
+                "boards": ["main", "chinext"],
+            },
+        )
+        assert response.status_code == 202
+        state = wait_for_done(client, response.json()["data"]["job_id"])
+
+    assert state["status"] == "completed"
+    assert received == {
+        "instrument_types": ("stock",),
+        "boards": ("main", "chinext"),
+    }
+
+
+def test_market_sync_rejects_an_invalid_request() -> None:
     with TestClient(create_app(engine=EmptyEngine())) as client:
         response = client.post(
-            "/api/v1/market-data/sync",
-            json={"vipdoc_path": str(tmp_path / "missing-vipdoc")},
+            "/api/v1/market-data/sync-online",
+            json={"bars": 0},
         )
 
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "data_directory_error"
+    assert response.json()["error"]["code"] == "validation_error"
 
 
 def test_backtest_job_can_be_created_and_results_are_available(tmp_path: Path) -> None:
@@ -271,29 +312,25 @@ def test_backtest_default_service_reads_day_file_and_serializes_result(tmp_path:
     vipdoc = tmp_path / "vipdoc"
     filepath = vipdoc / "sh/lday/sh600000.day"
     filepath.parent.mkdir(parents=True)
-    append_daily_bars(
+    write_day_records(
         filepath,
         [
-            SecurityBar(
-                open=float(close),
-                close=float(close),
-                high=float(close) + 0.5,
-                low=float(close) - 0.5,
-                vol=100_000,
-                amount=float(close) * 100_000,
-                year=2024,
-                month=1,
-                day=index,
-                hour=0,
-                minute=0,
+            (
+                20240100 + index,
+                float(close),
+                float(close) + 0.5,
+                float(close) - 0.5,
+                float(close),
+                100_000,
+                float(close) * 100_000,
             )
             for index, close in enumerate((10, 11, 12, 13, 14, 13, 12, 14, 15, 14), start=1)
         ],
-        price_coeff=0.01,
-        vol_coeff=0.01,
     )
+    store = DuckDbMarketDataStore(tmp_path / "market.duckdb")
+    LocalDayImporter(store).import_vipdoc(vipdoc)
 
-    with TestClient(create_app()) as client:
+    with TestClient(create_app(market_data_store=store)) as client:
         response = client.post(
             "/api/v1/backtests",
             json={

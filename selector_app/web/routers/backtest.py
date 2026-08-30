@@ -12,7 +12,7 @@ from selector_app.backtest.models import BacktestConfig, BacktestReport
 from selector_app.backtest.service import BacktestProgressCallback, BacktestService
 from selector_app.screening.jobs import JobState, ScreenJobRunner, TaskUserError
 
-from ..schemas import BacktestRequest, validate_vipdoc_path
+from ..schemas import BacktestRequest
 
 router = APIRouter(prefix="/backtests", tags=["backtests"])
 
@@ -43,7 +43,6 @@ def _state_or_404(job_id: str, request: Request) -> JobState:
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 def create_backtest(payload: BacktestRequest, request: Request) -> JSONResponse:
     try:
-        validate_vipdoc_path(payload.vipdoc_path)
         config = payload.to_config()
 
         def run_backtest(progress: Callable[[int, int], None]) -> dict[str, object]:

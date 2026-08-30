@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import struct
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from selector_app.market_data.day_format import (
+    DayFileError,
+    classify_instrument,
+    read_day_file,
+)
+
+_RECORD = struct.Struct("<IIIIIfII")
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def _write_day(path: Path, *dates: int, tail: bytes = b"") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = b"".join(
+        _RECORD.pack(
+            value,
+            1000 + index,
+            1100 + index,
+            900 + index,
+            1050 + index,
+            123456.5 + index,
+            200000 + index,
+            0,
+        )
+        for index, value in enumerate(dates)
+    )
+    path.write_bytes(records + tail)
+
+
+@pytest.mark.parametrize(
+    ("market", "code", "expected"),
+    [
+        ("SH", "600000", "stock"),
+        ("SH", "900001", "stock"),
+        ("SH", "510300", "fund"),
+        ("SH", "000001", "index"),
+        ("SH", "110001", "bond"),
+        ("SZ", "000001", "stock"),
+        ("SZ", "200001", "stock"),
+        ("SZ", "159915", "fund"),
+        ("SZ", "399001", "index"),
+        ("SZ", "110001", "bond"),
+    ],
+)
+def test_classify_instrument_supports_all_known_day_types(
+    market: str, code: str, expected: str
+) -> None:
+    assert classify_instrument(market, code) == expected
+
+
+def test_classify_instrument_rejects_unknown_market_or_code() -> None:
+    assert classify_instrument("BJ", "430001") is None
+    assert classify_instrument("SH", "490001") is None
+    assert classify_instrument("SH", "not-code") is None
+
+
+def test_read_day_file_decodes_records_and_ignores_incomplete_tail(tmp_path: Path) -> None:
+    path = tmp_path / "sh" / "lday" / "sh600000.day"
+    _write_day(path, 20240102, 20240103, tail=b"broken")
+
+    result = read_day_file(
+        path,
+        now=datetime(2024, 1, 4, 16, 0, tzinfo=_SHANGHAI),
+    )
+
+    assert result.instrument_type == "stock"
+    assert result.tail_bytes == 6
+    assert list(result.frame["date"].dt.strftime("%Y-%m-%d")) == [
+        "2024-01-02",
+        "2024-01-03",
+    ]
+    assert result.frame.iloc[0]["open"] == pytest.approx(10.0)
+    assert result.frame.iloc[0]["close"] == pytest.approx(10.5)
+    assert result.frame.iloc[0]["volume"] == pytest.approx(2000.0)
+    assert result.frame.iloc[0]["amount"] == pytest.approx(123456.5)
+    assert set(result.frame["bar_status"]) == {"completed"}
+
+
+def test_read_day_file_uses_shanghai_b_share_price_coefficient(tmp_path: Path) -> None:
+    path = tmp_path / "sh" / "lday" / "sh900001.day"
+    _write_day(path, 20240102)
+
+    result = read_day_file(path, now=datetime(2024, 1, 4, 16, 0, tzinfo=_SHANGHAI))
+
+    assert result.instrument_type == "stock"
+    assert result.price_coefficient == pytest.approx(0.001)
+    assert result.frame.iloc[0]["open"] == pytest.approx(1.0)
+
+
+def test_read_day_file_marks_current_bar_provisional_before_close(tmp_path: Path) -> None:
+    path = tmp_path / "sz" / "lday" / "sz000001.day"
+    _write_day(path, 20240103, 20240104)
+
+    result = read_day_file(
+        path,
+        now=datetime(2024, 1, 4, 15, 4, tzinfo=_SHANGHAI),
+    )
+
+    assert list(result.frame["bar_status"]) == ["completed", "provisional"]
+
+
+def test_read_day_file_rejects_invalid_complete_date(tmp_path: Path) -> None:
+    path = tmp_path / "sh" / "lday" / "sh600000.day"
+    _write_day(path, 20241301)
+
+    with pytest.raises(DayFileError, match="日期无效"):
+        read_day_file(path)

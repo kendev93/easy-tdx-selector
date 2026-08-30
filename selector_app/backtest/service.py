@@ -1,4 +1,4 @@
-"""Run parsed formula signals through easy_tdx's historical trade engine."""
+"""Run parsed formula signals through the project's daily-bar trade engine."""
 
 from __future__ import annotations
 
@@ -9,15 +9,18 @@ from typing import Protocol, cast
 
 import numpy as np
 import pandas as pd
-from easy_tdx.backtest import BacktestEngine, BacktestResult, Strategy
 
-from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, MarketCode, StockRef
 from selector_app.formulas.common import validate_market_data
 from selector_app.formulas.custom import ParsedFormula, evaluate_custom_formula, parse_formula
 from selector_app.formulas.registry import FORMULA_REGISTRY, FormulaRegistry
 from selector_app.formulas.types import FormulaResult
+from selector_app.market_data.adapter import DuckDbMarketDataAdapter
+from selector_app.market_data.models import MarketCode, StockRef
+from selector_app.market_data.store import DuckDbMarketDataStore
 
+from .engine import SignalBacktestConfig, SignalBacktestResult, run_signal_backtest
 from .models import BacktestConfig, BacktestReport, BacktestValue
+from .profiles import profile_from_config
 
 BacktestProgressCallback = Callable[[int, int], None]
 
@@ -36,7 +39,7 @@ class BacktestService:
         adapter: BacktestMarketDataAdapter | None = None,
         registry: FormulaRegistry | None = None,
     ) -> None:
-        self._adapter = adapter or EasyTdxAdapter()
+        self._adapter = adapter or DuckDbMarketDataAdapter(DuckDbMarketDataStore())
         self._registry = registry or FORMULA_REGISTRY
 
     def run(
@@ -155,50 +158,41 @@ class BacktestService:
         buy_mask: np.ndarray,
         sell_mask: np.ndarray,
         config: BacktestConfig,
-    ) -> BacktestResult:
-        data = frame.rename(columns={"date": "datetime", "volume": "vol"})[
-            ["datetime", "open", "high", "low", "close", "vol", "amount"]
-        ]
-        order_size = 0 if config.position_mode == "full" else cast(int, config.fixed_size)
-
-        class FormulaSignalStrategy(Strategy):  # type: ignore[misc, unused-ignore]
-            def __init__(self) -> None:
-                super().__init__()
-                self._cursor = -1
-
-            def init(self) -> None:
-                self._cursor = -1
-
-            def next(self) -> None:
-                self._cursor += 1
-                if self.position["size"] > 0:
-                    if bool(sell_mask[self._cursor]):
-                        self.sell(size=order_size)
-                elif bool(buy_mask[self._cursor]):
-                    self.buy(size=order_size)
-
-        return BacktestEngine(
-            FormulaSignalStrategy,
-            cash=config.initial_cash,
-            commission=config.commission,
-            min_commission=config.min_commission,
-            stamp_tax=config.stamp_tax,
-            slippage=config.slippage,
-            execution=config.execution,
-            position_mode=config.position_mode,
-            reject_policy="reduce",
-        ).run(data)
+    ) -> SignalBacktestResult:
+        return run_signal_backtest(
+            frame,
+            buy_mask,
+            sell_mask,
+            SignalBacktestConfig(
+                initial_cash=config.initial_cash,
+                commission=config.commission,
+                min_commission=config.min_commission,
+                stamp_tax=config.stamp_tax,
+                slippage=config.slippage,
+                execution=config.execution,
+                position_mode=config.position_mode,
+                fixed_size=config.fixed_size,
+                instrument_type=config.instrument_type or "stock",
+            ),
+            market=config.market,
+            code=config.code,
+        )
 
     @staticmethod
     def _build_report(
-        result: BacktestResult,
+        result: SignalBacktestResult,
         frame: pd.DataFrame,
         config: BacktestConfig,
     ) -> BacktestReport:
-        # The result shape is the stable public easy_tdx.backtest.BacktestResult
-        # contract; keeping serialization here prevents pandas/numpy values from
-        # leaking into JSONResponse.
+        # Keep serialization here so pandas/numpy values never leak into the
+        # JSON response contract.
         dates = frame["date"]
+        profile = profile_from_config(
+            config.instrument_type or "stock",
+            commission=config.commission,
+            min_commission=config.min_commission,
+            stamp_tax=config.stamp_tax,
+        )
         return BacktestReport(
             market=config.market,
             code=config.code,
@@ -213,13 +207,16 @@ class BacktestService:
             positions=tuple(_frame_records(result.positions)),
             configuration={
                 "initial_cash": config.initial_cash,
-                "commission": config.commission,
-                "min_commission": config.min_commission,
-                "stamp_tax": config.stamp_tax,
+                "commission": profile.commission,
+                "min_commission": profile.min_commission,
+                "stamp_tax": profile.stamp_tax,
                 "slippage": config.slippage,
                 "execution": config.execution,
                 "position_mode": config.position_mode,
                 "fixed_size": config.fixed_size,
+                "instrument_type": profile.instrument_type,
+                "board": config.board or "main",
+                "virtual": profile.virtual,
             },
             diagnostic=result.diagnostic,
         )
