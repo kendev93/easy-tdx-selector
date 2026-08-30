@@ -58,6 +58,9 @@ const syncRemaining = computed(() => Math.max(
   (syncJob.value?.total_candidates ?? 0) - (syncJob.value?.total_scanned ?? 0),
   0,
 ))
+const presetSignals = computed(() => (
+  metadata.value?.indicators.flatMap((indicator) => indicator.signals) ?? []
+))
 const canSubmit = computed(() => (
   !loading.value
   && !syncLoading.value
