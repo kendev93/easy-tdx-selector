@@ -47,17 +47,6 @@ def test_default_data_dir_uses_indicator_lab_directory(
     assert default_data_dir() == tmp_path / ".indicator-lab"
 
 
-def test_default_data_dir_keeps_existing_legacy_directory(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.delenv("SELECTOR_DATA_DIR", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    legacy_dir = tmp_path / ".easy-tdx-selector"
-    legacy_dir.mkdir()
-
-    assert default_data_dir() == legacy_dir
-
-
 def test_store_initializes_schema_and_reads_one_symbol(tmp_path: Path) -> None:
     store = DuckDbMarketDataStore(tmp_path / "market.duckdb")
     store.replace_local_bars("SH", "600000", "stock", _bars())

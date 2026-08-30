@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from selector_app.adapters.easy_tdx_adapter import StockRef
+from selector_app.adapters.local_day_adapter import StockRef
 from selector_app.portfolio_backtest.models import PortfolioBacktestConfig
 from selector_app.portfolio_backtest.service import PortfolioBacktestService
 

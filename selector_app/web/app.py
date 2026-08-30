@@ -90,8 +90,8 @@ def create_app(
             selected_runner.shutdown()
 
     app = FastAPI(
-        title="Easy TDX 选股台",
-        description="基于项目自有 DuckDB 行情仓库的公式选股 API",
+        title="Indicator Lab",
+        description="基于项目自有 DuckDB 行情仓库的指标筛选、组合与回测 API",
         version="0.1.0",
         lifespan=lifespan,
     )

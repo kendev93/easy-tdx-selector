@@ -1,8 +1,4 @@
-"""Backward-compatible import shim for the project-owned local adapter.
-
-The historical module path is kept for embedders, but it contains no import of
-the external ``easy-tdx`` package.
-"""
+"""Compatibility exports for the project-owned local market-data adapter."""
 
 from selector_app.market_data.adapter import MarketDataAdapter
 from selector_app.market_data.local_adapter import (
@@ -14,10 +10,7 @@ from selector_app.market_data.local_adapter import (
     suggested_vipdoc_path,
 )
 
-EasyTdxAdapter = LocalDayMarketDataAdapter
-
 __all__ = [
-    "EasyTdxAdapter",
     "LocalDayMarketDataAdapter",
     "MarketCode",
     "MarketDataAdapter",

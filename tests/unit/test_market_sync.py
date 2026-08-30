@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from selector_app.adapters.market_sync import EasyTdxMarketSync, MarketSyncConfig
+from selector_app.adapters.market_sync import MarketSyncConfig, TdxMarketSync
 from selector_app.market_data.store import DuckDbMarketDataStore
 from selector_app.tdx_protocol.types import KlineCategory
 
@@ -59,10 +59,8 @@ class FakeClient:
         return self.frame.tail(min(count, len(self.frame))).copy()
 
 
-def _service(
-    tmp_path: Path, client: FakeClient, *, clock: datetime | None = None
-) -> EasyTdxMarketSync:
-    return EasyTdxMarketSync(
+def _service(tmp_path: Path, client: FakeClient, *, clock: datetime | None = None) -> TdxMarketSync:
+    return TdxMarketSync(
         store=DuckDbMarketDataStore(tmp_path / "market.duckdb"),
         client_factory=lambda _timeout: client,
         clock=(lambda: clock) if clock is not None else None,

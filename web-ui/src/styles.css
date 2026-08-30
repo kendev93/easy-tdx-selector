@@ -31,7 +31,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .screen-page { min-height: 100vh; background: radial-gradient(circle at 72% -10%, rgba(34, 197, 94, 0.06), transparent 34rem), var(--background); }
 .topbar { display: flex; align-items: center; gap: 40px; height: 70px; padding: 0 42px; border-bottom: 1px solid rgba(59, 80, 110, 0.42); background: rgba(2, 6, 23, 0.88); position: sticky; top: 0; z-index: 10; backdrop-filter: blur(16px); }
 .brand { display: inline-flex; align-items: center; gap: 11px; color: var(--text); text-decoration: none; letter-spacing: -0.02em; }
-.brand-mark { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid rgba(34, 197, 94, 0.7); border-radius: 8px; color: var(--accent); font-weight: 800; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.brand-mark { display: block; width: 34px; height: 34px; padding: 2px; object-fit: contain; border: 1px solid rgba(34, 197, 94, 0.4); border-radius: 9px; background: #effcf9; }
 .brand strong, .brand small { display: block; }
 .brand strong { font-size: 14px; line-height: 1.15; }
 .brand small { margin-top: 2px; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; }

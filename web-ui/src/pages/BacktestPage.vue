@@ -299,9 +299,9 @@ watch(() => form.formulaText, (value) => {
 <template>
   <div class="screen-page backtest-page" data-testid="backtest-page">
     <header class="topbar">
-      <a class="brand" href="/formula-screen" aria-label="Easy TDX 选股台首页">
-        <span class="brand-mark">E</span>
-        <span><strong>Easy TDX</strong><small>选股台</small></span>
+      <a class="brand" href="/formula-screen" aria-label="指标实验室首页">
+        <img class="brand-mark" src="/indicator-lab-mark.png" alt="" aria-hidden="true" width="34" height="34">
+        <span><strong>Indicator Lab</strong><small>指标实验室</small></span>
       </a>
       <nav aria-label="主导航">
         <a class="nav-link" href="/formula-screen">公式选股</a>

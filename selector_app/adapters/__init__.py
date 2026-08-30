@@ -7,13 +7,9 @@ from selector_app.market_data.local_adapter import (
     suggested_vipdoc_path,
 )
 
-from .market_sync import EasyTdxMarketSync, MarketSyncConfig, MarketSyncReport, TdxMarketSync
-
-EasyTdxAdapter = LocalDayMarketDataAdapter
+from .market_sync import MarketSyncConfig, MarketSyncReport, TdxMarketSync
 
 __all__ = [
-    "EasyTdxAdapter",
-    "EasyTdxMarketSync",
     "MarketSyncConfig",
     "MarketSyncReport",
     "StockRef",

@@ -30,7 +30,7 @@ _RETRY_DELAYS = (0.1, 0.5, 1.0, 2.0)
 
 
 def _hosts() -> list[str]:
-    configured = os.getenv("TDX_KNOWN_HOSTS") or os.getenv("EASY_TDX_KNOWN_HOSTS")
+    configured = os.getenv("TDX_KNOWN_HOSTS")
     if configured:
         values = [value.strip() for value in configured.split(",") if value.strip()]
         if values:
@@ -39,7 +39,7 @@ def _hosts() -> list[str]:
 
 
 def _port() -> int:
-    return int(os.getenv("TDX_PORT") or os.getenv("EASY_TDX_PORT") or "7709")
+    return int(os.getenv("TDX_PORT") or "7709")
 
 
 class TdxClient:
@@ -54,7 +54,7 @@ class TdxClient:
         connection_factory: Callable[[str, int, float], TdxConnection] | None = None,
     ) -> None:
         self._hosts = _hosts()
-        configured_host = os.getenv("TDX_HOST") or os.getenv("EASY_TDX_HOST")
+        configured_host = os.getenv("TDX_HOST")
         self._host = host or configured_host or self._hosts[0]
         self._port = port or _port()
         self._timeout = timeout
@@ -64,7 +64,7 @@ class TdxClient:
     @classmethod
     def from_best_host(cls, timeout: float = 15.0) -> TdxClient:
         hosts = _hosts()
-        configured = os.getenv("TDX_HOST") or os.getenv("EASY_TDX_HOST")
+        configured = os.getenv("TDX_HOST")
         if configured:
             return cls(configured, timeout=timeout)
         measured = cls.measure_hosts(timeout=min(timeout, 2.0))

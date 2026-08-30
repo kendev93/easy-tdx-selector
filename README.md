@@ -1,8 +1,19 @@
 # 指标实验室（Indicator Lab）
 
+<p align="center">
+  <img src="assets/branding/indicator-lab-mark.png" alt="Indicator Lab logo" width="160">
+</p>
+
+<p align="center">
+  <strong>让复杂指标可筛选、可组合、可回测。</strong><br>
+  一个面向指标研究与策略验证的跨平台本地工作台
+</p>
+
 一个独立的跨平台指标筛选、组合与回测应用，使用 Vue/TypeScript + FastAPI，将本地通达信 `vipdoc` 日线导入项目自己的 DuckDB 数据仓库，再计算和验证交易指标信号。
 
 运行时不依赖外部行情框架。项目内置满足日线同步所需的最小 TDX TCP 客户端和 `.day` 读取器；协议适配的第三方许可说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+![Indicator Lab workflow](assets/branding/indicator-lab-overview.png)
 
 ## 项目起因与目标
 
@@ -79,7 +90,7 @@ cd indicator-lab
 docker compose up --build -d
 ```
 
-这样克隆项目后即可直接启动页面和 API。Docker 会自动创建两个持久化卷；为了保留改名前已有的本地数据，卷的底层存储 ID 仍使用 `easy_tdx_selector_vipdoc`（原始输入）和 `easy_tdx_selector_market`（DuckDB 主库）。如果还没有导入行情，页面仍然可以打开，但扫描和回测结果会为空。
+这样克隆项目后即可直接启动页面和 API。Docker 会自动创建 `indicator_lab_vipdoc`（原始输入）和 `indicator_lab_market`（DuckDB 主库）两个持久化卷。如果之前运行过旧版本，旧卷不会被自动删除或迁移，需要在启动前自行复制数据；如果还没有导入行情，页面仍然可以打开，但扫描和回测结果会为空。
 
 如果本机已经安装通达信，推荐直接共享桌面端的 `vipdoc` 目录，而不是复制一份：
 
@@ -97,7 +108,7 @@ docker compose \
 /data/vipdoc
 ```
 
-无通达信模式使用持久化 named volume；普通 `docker compose down` 或删除容器不会删除数据。共享模式使用宿主机原目录作为只读输入，数据库仍保存在独立的 `market_data` 卷中。不要使用 `docker compose down -v` 或执行 `docker volume rm easy_tdx_selector_market`，除非确认要删除本地数据库。查看卷使用 `docker volume inspect easy_tdx_selector_market`，查看状态使用 `docker compose ps`，停止使用 `docker compose down`。`WEB_PORT` 和 `API_PORT` 仍可通过 `.env` 修改。
+无通达信模式使用持久化 named volume；普通 `docker compose down` 或删除容器不会删除数据。共享模式使用宿主机原目录作为只读输入，数据库仍保存在独立的 `market_data` 卷中。不要使用 `docker compose down -v` 或执行 `docker volume rm indicator_lab_market`，除非确认要删除本地数据库。查看卷使用 `docker volume inspect indicator_lab_market`，查看状态使用 `docker compose ps`，停止使用 `docker compose down`。`WEB_PORT` 和 `API_PORT` 仍可通过 `.env` 修改。
 
 如果只想把已有数据复制进 Docker，而不持续共享桌面端目录，仍可使用：
 

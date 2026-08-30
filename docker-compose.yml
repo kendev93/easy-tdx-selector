@@ -32,6 +32,6 @@ services:
 
 volumes:
   vipdoc_data:
-    name: easy_tdx_selector_vipdoc
+    name: indicator_lab_vipdoc
   market_data:
-    name: easy_tdx_selector_market
+    name: indicator_lab_market

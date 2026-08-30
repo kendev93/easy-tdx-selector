@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from selector_app.adapters.easy_tdx_adapter import EasyTdxAdapter, StockRef
+from selector_app.adapters.local_day_adapter import LocalDayMarketDataAdapter, StockRef
 from tests.day_helpers import write_day_records
 
 
@@ -27,7 +27,7 @@ def test_adapter_lists_all_known_shenzhen_and_shanghai_day_files(tmp_path: Path)
     ):
         touch(vipdoc / ("sh" if filename.startswith("sh") else "sz") / "lday" / filename)
 
-    refs = EasyTdxAdapter().list_stock_refs(str(vipdoc), "all")
+    refs = LocalDayMarketDataAdapter().list_stock_refs(str(vipdoc), "all")
 
     assert [(ref.market, ref.code, ref.instrument_type) for ref in refs] == [
         ("SH", "000001", "index"),
@@ -54,10 +54,10 @@ def test_adapter_excludes_provisional_current_day_before_close(tmp_path: Path) -
     )
     ref = StockRef(market="SH", code="600000", path=filepath)
 
-    before_close = EasyTdxAdapter(
+    before_close = LocalDayMarketDataAdapter(
         clock=lambda: datetime(2026, 8, 26, 10, 0, tzinfo=timezone),
     ).read_stock(ref)
-    after_close = EasyTdxAdapter(
+    after_close = LocalDayMarketDataAdapter(
         clock=lambda: datetime(2026, 8, 26, 16, 0, tzinfo=timezone),
     ).read_stock(ref)
 
@@ -72,7 +72,7 @@ def test_adapter_builds_a_valid_single_stock_reference(tmp_path: Path) -> None:
     vipdoc = tmp_path / "vipdoc"
     vipdoc.mkdir()
 
-    ref = EasyTdxAdapter().stock_ref(vipdoc, "SH", "600000")
+    ref = LocalDayMarketDataAdapter().stock_ref(vipdoc, "SH", "600000")
 
     assert ref.market == "SH"
     assert ref.code == "600000"

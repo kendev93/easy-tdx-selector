@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from selector_app.adapters.easy_tdx_adapter import StockRef
+from selector_app.adapters.local_day_adapter import StockRef
 from selector_app.market_data.service import LocalMarketDataService
 
 

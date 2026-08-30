@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from selector_app.adapters.easy_tdx_adapter import StockRef
+from selector_app.adapters.local_day_adapter import StockRef
 from selector_app.screening.engine import ScreenEngine, combine_matches
 from selector_app.screening.models import ScanConfig
 

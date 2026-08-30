@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from selector_app.adapters.market_sync import EasyTdxMarketSync, MarketSyncConfig
+from selector_app.adapters.market_sync import MarketSyncConfig, TdxMarketSync
 from selector_app.market_data.store import DuckDbMarketDataStore
 from selector_app.tdx_protocol.types import KlineCategory
 
@@ -64,7 +64,7 @@ def test_online_sync_writes_duckdb_without_touching_vipdoc(tmp_path: Path) -> No
     source_dir.mkdir()
     client = FakeClient()
 
-    report = EasyTdxMarketSync(
+    report = TdxMarketSync(
         store=store,
         client_factory=lambda _timeout: client,
         clock=lambda: datetime(2026, 8, 30, 16, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
@@ -85,7 +85,7 @@ def test_online_sync_does_not_overwrite_local_rows(tmp_path: Path) -> None:
     store.replace_local_bars("SH", "600000", "stock", local)
     client = FakeClient(_frame(99.0))
 
-    report = EasyTdxMarketSync(
+    report = TdxMarketSync(
         store=store,
         client_factory=lambda _timeout: client,
     ).sync(MarketSyncConfig(universe="sh"))
@@ -103,7 +103,7 @@ def test_online_sync_uses_existing_store_targets_without_refetching_security_lis
     store.replace_local_bars("SH", "600000", "stock", _frame())
     client = FakeClient()
 
-    report = EasyTdxMarketSync(
+    report = TdxMarketSync(
         store=store,
         client_factory=lambda _timeout: client,
     ).sync(MarketSyncConfig(universe="sh", prefer_store_targets=True))
@@ -117,7 +117,7 @@ def test_online_security_list_fills_name_for_existing_local_instrument(tmp_path:
     store.replace_local_bars("SH", "600000", "stock", _frame())
     client = FakeClient()
 
-    EasyTdxMarketSync(
+    TdxMarketSync(
         store=store,
         client_factory=lambda _timeout: client,
     ).sync(MarketSyncConfig(universe="sh"))
@@ -131,7 +131,7 @@ def test_store_target_sync_refreshes_missing_names_once(tmp_path: Path) -> None:
     store.replace_local_bars("SH", "600000", "stock", _frame())
     client = FakeClient()
 
-    report = EasyTdxMarketSync(
+    report = TdxMarketSync(
         store=store,
         client_factory=lambda _timeout: client,
     ).sync(

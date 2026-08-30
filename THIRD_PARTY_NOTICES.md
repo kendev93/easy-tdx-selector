@@ -2,6 +2,8 @@
 
 ## TDX 协议和 `.day` 解析参考
 
+本节中的上游项目名称仅用于许可证归属和技术参考，不代表指标实验室与任何上游项目存在品牌或官方关联。
+
 本项目运行时不依赖 `easy-tdx`。`selector_app/tdx_protocol/` 和
 `selector_app/market_data/day_format.py` 的协议字段、`.day` 记录格式、价格/成交量系数和部分容错行为，参考并改写自 MIT 许可的
 `easy-tdx`/`pytdx`/`xmtdx` 相关实现与测试；项目没有把上游包作为依赖，也没有在运行时导入其模块。

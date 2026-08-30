@@ -13,7 +13,7 @@ if [ ! -d "$SOURCE_PATH" ]; then
   exit 1
 fi
 
-VOLUME_NAME=easy_tdx_selector_vipdoc
+VOLUME_NAME=indicator_lab_vipdoc
 docker volume create "$VOLUME_NAME" >/dev/null
 docker run --rm \
   --mount "type=bind,src=$SOURCE_PATH,dst=/source,readonly" \

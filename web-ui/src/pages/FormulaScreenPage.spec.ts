@@ -68,6 +68,11 @@ describe('FormulaScreenPage', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="formula-screen-page"]')).toBeTruthy()
+    expect(wrapper.get('img.brand-mark').attributes()).toMatchObject({
+      src: '/indicator-lab-mark.png',
+      alt: '',
+      'aria-hidden': 'true',
+    })
     expect(wrapper.get('[data-testid="signal-indicator_three.prepare_rally"]')).toBeTruthy()
     for (const checkbox of wrapper.findAll('input[type="checkbox"]')) {
       if ((checkbox.element as HTMLInputElement).checked) await checkbox.setValue(false)

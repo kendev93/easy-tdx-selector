@@ -411,10 +411,7 @@ def _has_new_online_data(existing: pd.DataFrame, latest: pd.DataFrame) -> bool:
     return False
 
 
-EasyTdxMarketSync = TdxMarketSync
-
 __all__ = [
-    "EasyTdxMarketSync",
     "MarketSyncConfig",
     "MarketSyncReport",
     "TdxMarketClient",
