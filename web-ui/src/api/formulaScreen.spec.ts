@@ -57,6 +57,16 @@ describe('formula screen API client', () => {
     })
   })
 
+  it('surfaces FastAPI detail errors when the error envelope is absent', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: '任务执行器暂不可用' }), { status: 503 }),
+    ))
+
+    await expect(fetchMetadata()).rejects.toMatchObject({
+      name: 'FormulaScreenApiError', message: '任务执行器暂不可用', status: 503,
+    })
+  })
+
   it('creates and polls a market sync job', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { job_id: 'sync-1', status: 'queued' } }), { status: 202 }))

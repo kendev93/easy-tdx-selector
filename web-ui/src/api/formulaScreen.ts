@@ -15,6 +15,7 @@ const API_ROOT = '/api/v1'
 
 interface ApiErrorPayload {
   error?: { message?: string }
+  detail?: string
 }
 
 export class FormulaScreenApiError extends Error {
@@ -36,7 +37,7 @@ async function requestAt<T>(url: string, init?: RequestInit): Promise<T> {
   const payload = (await response.json()) as T & ApiErrorPayload
   if (!response.ok) {
     throw new FormulaScreenApiError(
-      payload.error?.message ?? '请求失败，请检查配置后重试。',
+      payload.error?.message ?? payload.detail ?? '请求失败，请检查配置后重试。',
       response.status,
     )
   }

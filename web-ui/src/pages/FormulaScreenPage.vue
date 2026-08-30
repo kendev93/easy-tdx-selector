@@ -95,9 +95,10 @@ function toggleBoard(board: InstrumentBoard): void {
     : [...form.boards, board]
 }
 
-function apiMessage(error: unknown): string {
+function apiMessage(error: unknown, context: string): string {
   if (error instanceof FormulaScreenApiError) return error.message
-  return '扫描失败，请检查后端服务、数据目录和配置后重试。'
+  if (error instanceof Error && error.message) return `${context}：${error.message}`
+  return context
 }
 
 async function parseCustomFormula(): Promise<void> {
@@ -148,7 +149,9 @@ async function pollUntilFinished(jobId: string): Promise<void> {
       message.value = `扫描完成：命中 ${payload.meta.total_signals} 个条件，得到 ${payload.results.length} 只股票。`
       return
     }
-    if (state.status === 'failed') throw new Error(state.error ?? '扫描任务失败')
+    if (state.status === 'failed') {
+      throw new FormulaScreenApiError(state.error ?? '扫描任务执行失败。', 500)
+    }
     await new Promise((resolve) => window.setTimeout(resolve, 250))
   }
 }
@@ -183,13 +186,13 @@ async function syncMarketData(): Promise<void> {
           : '行情同步完成。'
         return
       }
-      if (state.status === 'failed') throw new Error(state.error ?? '行情同步失败')
+      if (state.status === 'failed') {
+        throw new FormulaScreenApiError(state.error ?? '行情同步执行失败。', 500)
+      }
       await new Promise((resolve) => window.setTimeout(resolve, 250))
     }
   } catch (error) {
-    message.value = error instanceof FormulaScreenApiError
-      ? error.message
-      : '行情同步失败，请检查网络和 DuckDB 数据状态后重试。'
+    message.value = apiMessage(error, '行情同步失败，请检查网络和 DuckDB 数据状态后重试')
   } finally {
     syncLoading.value = false
   }
@@ -203,8 +206,10 @@ async function submit(): Promise<void> {
   loading.value = true
   results.value = []
   resultMeta.value = null
+  let jobCreated = false
   try {
     const created = await createJob(buildScanPayload(form))
+    jobCreated = true
     job.value = {
       job_id: created.job_id,
       status: 'queued',
@@ -218,7 +223,12 @@ async function submit(): Promise<void> {
     }
     await pollUntilFinished(created.job_id)
   } catch (error) {
-    message.value = apiMessage(error)
+    message.value = apiMessage(
+      error,
+      jobCreated
+        ? '扫描任务执行失败，请检查后端服务、数据目录和配置后重试'
+        : '扫描任务提交失败，请检查后端服务、数据目录和配置后重试',
+    )
   } finally {
     loading.value = false
   }
@@ -260,7 +270,7 @@ onMounted(async () => {
       await parseCustomFormula()
     }
   } catch (error) {
-    message.value = apiMessage(error)
+    message.value = apiMessage(error, '公式元数据加载失败，请检查后端服务和网络后重试')
   }
 })
 

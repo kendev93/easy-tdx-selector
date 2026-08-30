@@ -82,6 +82,15 @@ describe('FormulaScreenPage', () => {
     expect(api.createJob).not.toHaveBeenCalled()
   })
 
+  it('distinguishes metadata loading failures from scan failures', async () => {
+    vi.mocked(api.fetchMetadata).mockRejectedValueOnce(new Error('metadata network down'))
+    const wrapper = mount(FormulaScreenPage)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('公式元数据加载失败')
+    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('metadata network down')
+  })
+
   it('keeps advanced settings collapsed until requested', async () => {
     const wrapper = mount(FormulaScreenPage)
     await flushPromises()
@@ -157,7 +166,8 @@ describe('FormulaScreenPage', () => {
     await wrapper.get('[data-testid="screen-config"]').trigger('submit')
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('扫描失败')
+    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('扫描任务提交失败')
+    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('network down')
   })
 
   it('parses a custom formula, exposes parameters, and submits the override', async () => {
@@ -267,7 +277,7 @@ describe('FormulaScreenPage', () => {
 
     vi.mocked(api.getJob).mockResolvedValueOnce({
       job_id: 'job-1', status: 'failed', progress: 1, total_candidates: 2, total_scanned: 0,
-      total_signals: 0, errors: 1, skipped: 0, error: null,
+      total_signals: 0, errors: 1, skipped: 0, error: 'DuckDB 读取失败',
     })
     await wrapper.get('[data-testid="mode-preset"]').trigger('click')
     await wrapper.get('[data-testid="signal-indicator_three.prepare_rally"]').setValue(true)
@@ -275,7 +285,7 @@ describe('FormulaScreenPage', () => {
     await wrapper.get('[data-testid="minimum-matches"]').setValue(1)
     await wrapper.get('[data-testid="screen-config"]').trigger('submit')
     await flushPromises()
-    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('扫描失败')
+    expect(wrapper.get('[data-testid="screen-message"]').text()).toContain('DuckDB 读取失败')
 
     vi.mocked(api.createSyncJob).mockRejectedValueOnce(new api.FormulaScreenApiError('行情服务拒绝', 503))
     await wrapper.get('[data-testid="sync-market-data"]').trigger('click')
