@@ -3,9 +3,9 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "easy-tdx-selector"
+name = "indicator-lab"
 version = "0.1.0"
-description = "Easy TDX 选股台：基于 DuckDB 的本地公式选股应用"
+description = "指标实验室：基于 DuckDB 的跨平台指标筛选、组合与回测应用"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10,<3.14"
@@ -28,7 +28,7 @@ dev = [
 ]
 
 [project.scripts]
-easy-tdx-selector = "selector_app.cli:main"
+indicator-lab = "selector_app.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["selector_app"]

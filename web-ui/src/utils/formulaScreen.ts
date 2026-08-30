@@ -14,12 +14,15 @@ export const DEFAULT_PRESET_SIGNALS = [
   'indicator_three.accumulation_zone',
 ]
 
-const FORM_STORAGE_KEY = 'easy-tdx-selector.form.v1'
+const FORM_STORAGE_KEY = 'indicator-lab.form.v1'
+const LEGACY_FORM_STORAGE_KEY = 'easy-tdx-selector.form.v1'
 
 export function loadSavedForm(): Partial<ScreenFormState> {
   if (typeof window === 'undefined') return {}
   try {
-    const raw = window.localStorage.getItem(FORM_STORAGE_KEY)
+    const current = window.localStorage.getItem(FORM_STORAGE_KEY)
+    const legacy = current ? null : window.localStorage.getItem(LEGACY_FORM_STORAGE_KEY)
+    const raw = current || legacy
     if (!raw) return {}
     const parsed = JSON.parse(raw) as Record<string, unknown>
     if (!parsed || typeof parsed !== 'object') return {}
@@ -57,6 +60,13 @@ export function loadSavedForm(): Partial<ScreenFormState> {
         Object.entries(parsed.formulaParameters).filter(([, value]) => typeof value === 'number' && Number.isFinite(value)),
       ) as Record<string, number>
       safe.formulaParameters = parameters
+    }
+    if (!current && legacy) {
+      try {
+        window.localStorage.setItem(FORM_STORAGE_KEY, legacy)
+      } catch {
+        // A restricted storage area should not discard a successfully parsed legacy form.
+      }
     }
     return safe
   } catch {

@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from selector_app.market_data.models import InstrumentRef
-from selector_app.market_data.store import DuckDbMarketDataStore
+from selector_app.market_data.store import DuckDbMarketDataStore, default_data_dir
 
 
 def _bars(*rows: tuple[str, str, str, float, str]) -> pd.DataFrame:
@@ -36,6 +36,26 @@ def _bars(*rows: tuple[str, str, str, float, str]) -> pd.DataFrame:
             for market, code, day, close, source in values
         ]
     )
+
+
+def test_default_data_dir_uses_indicator_lab_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("SELECTOR_DATA_DIR", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert default_data_dir() == tmp_path / ".indicator-lab"
+
+
+def test_default_data_dir_keeps_existing_legacy_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("SELECTOR_DATA_DIR", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    legacy_dir = tmp_path / ".easy-tdx-selector"
+    legacy_dir.mkdir()
+
+    assert default_data_dir() == legacy_dir
 
 
 def test_store_initializes_schema_and_reads_one_symbol(tmp_path: Path) -> None:

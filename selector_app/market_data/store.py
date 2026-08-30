@@ -27,6 +27,8 @@ from .models import (
 )
 
 SCHEMA_VERSION = 3
+_APP_DATA_DIR_NAME = ".indicator-lab"
+_LEGACY_APP_DATA_DIR_NAME = ".easy-tdx-selector"
 _BAR_COLUMNS = [
     "market",
     "code",
@@ -59,7 +61,11 @@ def default_data_dir() -> Path:
     configured = os.getenv("SELECTOR_DATA_DIR")
     if configured:
         return Path(configured).expanduser()
-    return Path.home() / ".easy-tdx-selector"
+    data_dir = Path.home() / _APP_DATA_DIR_NAME
+    legacy_data_dir = Path.home() / _LEGACY_APP_DATA_DIR_NAME
+    if not data_dir.exists() and legacy_data_dir.exists():
+        return legacy_data_dir
+    return data_dir
 
 
 def default_database_path() -> Path:

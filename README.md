@@ -1,6 +1,6 @@
-# 公式选股台
+# 指标实验室（Indicator Lab）
 
-一个独立的“公式选股”应用，使用 Vue/TypeScript + FastAPI，将本地通达信 `vipdoc` 日线导入项目自己的 DuckDB 数据仓库，再计算三组通达信公式信号。
+一个独立的跨平台指标筛选、组合与回测应用，使用 Vue/TypeScript + FastAPI，将本地通达信 `vipdoc` 日线导入项目自己的 DuckDB 数据仓库，再计算和验证交易指标信号。
 
 运行时不依赖外部行情框架。项目内置满足日线同步所需的最小 TDX TCP 客户端和 `.day` 读取器；协议适配的第三方许可说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
@@ -42,7 +42,7 @@ python -m pip install -e ".[dev]"
 
 ```bash
 uvicorn selector_app.web.app:app --reload --host 127.0.0.1 --port 8000
-# 或：easy-tdx-selector --reload
+# 或：indicator-lab --reload
 ```
 
 启动前端开发服务器：
@@ -60,11 +60,11 @@ npm run dev
 如果不想在宿主机安装 Python 或 Node.js，可以直接使用 Docker：
 
 ```bash
-cd easy-tdx-selector
+cd indicator-lab
 docker compose up --build -d
 ```
 
-这样克隆项目后即可直接启动页面和 API。Docker 会自动创建 `easy_tdx_selector_vipdoc`（原始输入）和 `easy_tdx_selector_market`（DuckDB 主库）两个持久化卷；如果还没有导入行情，页面仍然可以打开，但扫描和回测结果会为空。
+这样克隆项目后即可直接启动页面和 API。Docker 会自动创建两个持久化卷；为了保留改名前已有的本地数据，卷的底层存储 ID 仍使用 `easy_tdx_selector_vipdoc`（原始输入）和 `easy_tdx_selector_market`（DuckDB 主库）。如果还没有导入行情，页面仍然可以打开，但扫描和回测结果会为空。
 
 如果本机已经安装通达信，推荐直接共享桌面端的 `vipdoc` 目录，而不是复制一份：
 

@@ -38,6 +38,15 @@ describe('formula screen form helpers', () => {
     expect(loadSavedForm()).toMatchObject({ mode: 'preset' })
   })
 
+  it('migrates saved configuration from the legacy project key', () => {
+    const legacyKey = 'easy-tdx-selector.form.v1'
+    const saved = JSON.stringify(baseForm())
+    window.localStorage.setItem(legacyKey, saved)
+
+    expect(loadSavedForm()).toMatchObject({ mode: 'preset' })
+    expect(window.localStorage.getItem('indicator-lab.form.v1')).toBe(saved)
+  })
+
   it('rejects an empty selection and invalid minimum matches', () => {
     const form = { ...baseForm(), selectedSignals: [], minimumMatches: 2 }
 
